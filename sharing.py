@@ -108,6 +108,9 @@ class SharingTargetMixin(object):
 
 	def __manage_mute( self, mute=True ):
 		# TODO: Horribly inefficient
+		if self._p_jar:
+			self._p_jar.readCurrent( self.containersOfShared )
+			self._p_jar.readCurrent( self.containers_of_muted )
 		_from = self.containersOfShared
 		_to = self.containers_of_muted
 		if not mute:
