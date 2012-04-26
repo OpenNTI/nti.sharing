@@ -16,6 +16,8 @@ from BTrees.OOBTree import OOTreeSet
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import datastructures
 
+from nti.externalization.persistence import PersistentExternalizableList, PersistentExternalizableWeakList
+from nti.externalization.oids import to_external_ntiid_oid
 
 class SharingTargetMixin(object):
 	"""
@@ -79,7 +81,7 @@ class SharingTargetMixin(object):
 		# TODO: Specialize these data structures
 		self.containersOfShared = datastructures.ContainedStorage( weak=True,
 																   create=False,
-																   containerType=datastructures.PersistentExternalizableList,
+																   containerType=PersistentExternalizableList,
 																   set_ids=False )
 
 		# For muted conversations, which can be unmuted, there is an
@@ -88,7 +90,7 @@ class SharingTargetMixin(object):
 		# is to keep reads fast. Only writes--changing the muted status--are slow
 		self.containers_of_muted = datastructures.ContainedStorage( weak=True,
 																   create=False,
-																   containerType=datastructures.PersistentExternalizableList,
+																   containerType=PersistentExternalizableList,
 																   set_ids=False )
 		# This maintains the strings of external NTIID OIDs whose conversations are muted.
 		self.muted_oids = OOTreeSet()
@@ -160,13 +162,13 @@ class SharingTargetMixin(object):
 
 		if getattr( the_object, 'id', self ) in self.muted_oids:
 			return True
-		ntiid = datastructures.to_external_ntiid_oid( the_object )
+		ntiid = to_external_ntiid_oid( the_object )
 		if ntiid in self.muted_oids:
 			return True
-		reply_ntiid = datastructures.to_external_ntiid_oid( the_object.inReplyTo ) if hasattr( the_object, 'inReplyTo' ) else None
+		reply_ntiid = to_external_ntiid_oid( the_object.inReplyTo ) if hasattr( the_object, 'inReplyTo' ) else None
 		if reply_ntiid in self.muted_oids:
 			return True
-		refs_ntiids = [datastructures.to_external_ntiid_oid(x) for x in the_object.references] if hasattr( the_object, 'references') else ()
+		refs_ntiids = [to_external_ntiid_oid(x) for x in the_object.references] if hasattr( the_object, 'references') else ()
 		for x in refs_ntiids:
 			if x in self.muted_oids:
 				return True
@@ -314,7 +316,7 @@ class SharingTargetMixin(object):
 
 		container = self.streamCache.get( change.containerId )
 		if container is None:
-			container = datastructures.PersistentExternalizableWeakList()
+			container = PersistentExternalizableWeakList()
 			self.streamCache[change.containerId] = container
 		if len(container) >= self.MAX_STREAM_SIZE:
 			container.pop( 0 )
@@ -591,7 +593,7 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		if self.creator is not None and self.creator != actor:
 			raise ValueError( "Creator (%s) is not actor (%s)" % (self.creator,actor) )
 		if self._sharingTargets is None:
-			self._sharingTargets = datastructures.PersistentExternalizableList()
+			self._sharingTargets = PersistentExternalizableList()
 		if target not in self._sharingTargets:
 			# Don't allow sharing with ourself, it's weird
 			# Allow self.creator to be  string or an Entity
