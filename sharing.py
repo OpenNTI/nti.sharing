@@ -11,7 +11,7 @@ from zope import interface
 from zope import component
 
 
-from BTrees.OOBTree import OOTreeSet
+from BTrees.OOBTree import OOTreeSet, OOBTree
 
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import datastructures
@@ -98,7 +98,9 @@ class SharingTargetMixin(object):
 
 		# A cache of recent items that make of the stream. Going back
 		# further than this requires walking through the containersOfShared.
-		self.streamCache = datastructures.ModDateTrackingOOBTree()
+		# Map from containerId -> PersistentExternalizableWeakList
+		# TODO: Rethink this. It's terribly inefficient.
+		self.streamCache = OOBTree()
 
 	def _discard( self, s, k ):
 		try:
