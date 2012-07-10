@@ -12,6 +12,7 @@ from zope import component
 
 
 from BTrees.OOBTree import OOTreeSet, OOBTree
+from ZODB import loglevels
 
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import datastructures
@@ -95,6 +96,10 @@ class SharingTargetMixin(object):
 		# This maintains the strings of external NTIID OIDs whose conversations are muted.
 		self.muted_oids = OOTreeSet()
 
+		# These items are not using 'real' containers, so they don't become parents,
+		# so giving them navigable names is safe (and pretty)
+		self.containersOfShared.__name__ = '++containersOfShared'
+		self.containers_of_muted.__name__ = '++containersOfMuted'
 
 		# A cache of recent items that make of the stream. Going back
 		# further than this requires walking through the containersOfShared.
@@ -305,7 +310,8 @@ class SharingTargetMixin(object):
 		# Remove from both muted and normal, just in case
 		result = False
 		for containers in (self.containersOfShared,self.containers_of_muted):
-			result = containers.deleteEqualContainedObject( contained ) or result
+			# Drop the logging to trace because at least one of these will be missing
+			result = containers.deleteEqualContainedObject( contained, log_level=loglevels.TRACE ) or result
 		return result
 
 	def _addToStream( self, change ):
