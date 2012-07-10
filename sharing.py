@@ -16,9 +16,11 @@ from ZODB import loglevels
 
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import datastructures
+from nti.dataserver import containers
 
 from nti.externalization.persistence import PersistentExternalizableList, PersistentExternalizableWeakList
 from nti.externalization.oids import to_external_ntiid_oid
+
 
 class SharingTargetMixin(object):
 	"""
@@ -82,7 +84,7 @@ class SharingTargetMixin(object):
 		# TODO: Specialize these data structures
 		self.containersOfShared = datastructures.ContainedStorage( weak=True,
 																   create=False,
-																   containerType=PersistentExternalizableList,
+																   containerType=containers.EventlessLastModifiedBTreeContainer,
 																   set_ids=False )
 
 		# For muted conversations, which can be unmuted, there is an
@@ -91,7 +93,7 @@ class SharingTargetMixin(object):
 		# is to keep reads fast. Only writes--changing the muted status--are slow
 		self.containers_of_muted = datastructures.ContainedStorage( weak=True,
 																   create=False,
-																   containerType=PersistentExternalizableList,
+																   containerType=containers.EventlessLastModifiedBTreeContainer,
 																   set_ids=False )
 		# This maintains the strings of external NTIID OIDs whose conversations are muted.
 		self.muted_oids = OOTreeSet()
@@ -129,7 +131,11 @@ class SharingTargetMixin(object):
 		for container in _from.containers.values():
 			if isinstance( container, numbers.Number ): continue
 			for obj in container:
-				obj = obj()
+				# TODO: Temporary migration code. Old objects had lists as `container`
+				# while the new objects are BTrees. Do a database migration when the changes
+				# are finished.
+				if isinstance( obj, basestring ): obj = container[obj]()
+
 				if mute:
 					if self.is_muted( obj ):
 						to_move.append( obj )
@@ -141,8 +147,10 @@ class SharingTargetMixin(object):
 			_from.deleteEqualContainedObject( x )
 			_to.addContainedObject( x )
 
+			if not mute: continue
+
 			stream = self.streamCache.get( x.containerId )
-			if mute and stream is not None:
+			if stream is not None:
 				change = None
 				for change in stream:
 					if change.object == x:
@@ -297,6 +305,9 @@ class SharingTargetMixin(object):
 			calling the objects will either return the actual shared object, or None.
 		"""
 		result = self.containersOfShared.getContainer( containerId, defaultValue )
+		# TODO: Temporary migration code
+		if isinstance( result, containers.EventlessLastModifiedBTreeContainer ):
+			result = result.values()
 		return result
 
 	def _addSharedObject( self, contained ):
@@ -413,8 +424,14 @@ class SharingTargetMixin(object):
 		elif change.type == Change.MODIFIED:
 			if change.object is not None:
 				if change.object.isSharedWith( self ):
-					# FIXME: We get duplicate shared objects
-					# following multiple changes.
+					# NOTE: Each change is going into the stream
+					# leading to the possibility of multiple of the same objects
+					# in the stream.
+					# We should NOT have duplicates in the shared objects,
+					# though, because we're maintaining that as a map keyed by
+					# IDs. The container does detect and abort attempts to insert
+					# duplicate keys before the original is removed, so
+					# order matters
 					self._addToStream( change )
 					self._addSharedObject( change.object )
 				else:
