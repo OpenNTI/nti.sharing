@@ -9,7 +9,7 @@ import collections
 
 from zope import interface
 from zope import component
-
+from zope.cachedescriptors.property import CachedProperty
 
 from BTrees.OOBTree import OOTreeSet, OOBTree
 from ZODB import loglevels
@@ -615,6 +615,9 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 			for t in target: self.addSharingTarget( t, actor=actor )
 			return
 
+		# TODO: Triple check ensure that we are only storing strings
+		# in here, eliminate the instance checks.
+
 		if self.creator is not None and self.creator != actor:
 			raise ValueError( "Creator (%s) is not actor (%s)" % (self.creator,actor) )
 		if self._sharingTargets is None:
@@ -637,12 +640,12 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		if not self._sharingTargets:
 			return False
 
-		if not isinstance( wants, basestring ):
-			# because our list has strings in it,
-			# it's easiest to get this as a string now
+		try:
 			wants = wants.username
+		except AttributeError:
+			pass
 
-		return wants in self.getFlattenedSharingTargetNames()
+		return wants in self.flattenedSharingTargetNames
 
 	def getFlattenedSharingTargetNames(self):
 		""" Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
@@ -661,3 +664,5 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 			addToSet( target )
 
 		return sharingTargetNames
+
+	flattenedSharingTargetNames = CachedProperty( getFlattenedSharingTargetNames, '_sharingTargets' )
