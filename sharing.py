@@ -682,7 +682,6 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 
 		return wants in self._sharingTargets
 
-	@deprecate("Use the attribute")
 	def getFlattenedSharingTargetNames(self):
 		""" Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
 		is shared."""
@@ -690,3 +689,5 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 
 	flattenedSharingTargetNames = property( getFlattenedSharingTargetNames )
 	sharingTargets = property( getFlattenedSharingTargetNames )
+
+	getFlattenedSharingTargetNames = deprecate("Use the attribute")(getFlattenedSharingTargetNames)
