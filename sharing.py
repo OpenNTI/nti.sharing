@@ -9,8 +9,9 @@ import collections
 
 from zope import interface
 from zope import component
-from zope.cachedescriptors.property import CachedProperty
+from zope.deprecation import deprecate
 
+import BTrees
 from BTrees.OOBTree import OOTreeSet, OOBTree
 from ZODB import loglevels
 
@@ -591,48 +592,82 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 	with which it is shared (permissions) and some flags. Only its creator
 	can alter its sharing targets. It may be possible to copy this object. """
 
+	# An OOTreeSet of string usernames
+	_sharingTargets = None
+
 	def __init__( self ):
 		super(ShareableMixin,self).__init__()
-		# Our set of targets we are shared with. If we
-		# have a creator, then only the creator can alter these.
-		self._sharingTargets = None
-
-	@property
-	def sharingTargets(self):
-		return self._sharingTargets if self._sharingTargets is not None else ()
 
 	def clearSharingTargets( self ):
-		self._sharingTargets = None
-		self.updateLastMod()
+		if self._sharingTargets is not None:
+			self._sharingTargets.clear()
+
+			self.updateLastMod()
 
 	def addSharingTarget( self, target, actor=None ):
 		""" Adds a sharing target. We accept either SharingTarget
-		subclasses, or strings, or iterables of strings."""
+		subclasses, or strings, or iterables of strings.
+
+		"""
 		if isinstance( target, collections.Iterable ) \
 			   and not isinstance( target, basestring ) \
 			   and not hasattr( target, 'username' ):
-			# expand iterables now
-			for t in target: self.addSharingTarget( t, actor=actor )
+			# expand iterables (friends lists) now
+			for t in target:
+				self.addSharingTarget( t, actor=actor )
 			return
 
-		# TODO: Triple check ensure that we are only storing strings
-		# in here, eliminate the instance checks.
+		try:
+			target = target.username
+		except AttributeError:
+			pass
 
-		if self.creator is not None and self.creator != actor:
-			raise ValueError( "Creator (%s) is not actor (%s)" % (self.creator,actor) )
+
+		# Don't allow sharing with ourself, it's weird
+		# Allow self.creator to be  string or an Entity
+		try:
+			if self.creator is not None and (self.creator == target or self.creator.username == target):
+				return
+		except AttributeError:
+			# If it was already a string that was not equal
+			pass
+
 		if self._sharingTargets is None:
-			self._sharingTargets = PersistentExternalizableList()
-		if target not in self._sharingTargets:
-			# Don't allow sharing with ourself, it's weird
-			# Allow self.creator to be  string or an Entity
-			if not self.creator or (self.creator != target
-									and getattr(self.creator, 'username', self.creator) != target):
-				self._sharingTargets.append( target )
-		# if we ourselves are persistent, mark us changed
-		if hasattr( self, '_p_changed' ):
-			setattr( self, '_p_changed', True )
+			self._sharingTargets = OOTreeSet()
 
+		self._sharingTargets.add( target )
 		self.updateLastMod()
+
+	def updateSharingTargets( self, replacement_targets ):
+		"""
+		Cause this object to be shared with only the `replacement_targets` and
+		no one else.
+
+		:param replacement_targets: A collection of strings or users.
+		"""
+
+		replacement_usernames = set()
+		def addToSet( target ):
+			if isinstance( target, basestring ):
+				replacement_usernames.add( target )
+			elif isinstance( target, collections.Iterable ):
+				for x in target: addToSet( x )
+			else:
+				replacement_usernames.add( target.username )
+
+		for target in replacement_targets:
+			addToSet( target )
+
+		if not replacement_targets:
+			self.clearSharingTargets()
+			return
+
+		self.addSharingTarget( replacement_usernames )
+		# Now remove any excess
+		replacement_usernames = OOTreeSet( replacement_usernames )
+		for x in BTrees.family64.OO.difference( self._sharingTargets, replacement_usernames ):
+			self._sharingTargets.remove( x )
+
 
 	def isSharedWith( self, wants ):
 		""" Checks if we are shared with `wants`, which can be a
@@ -645,24 +680,13 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		except AttributeError:
 			pass
 
-		return wants in self.flattenedSharingTargetNames
+		return wants in self._sharingTargets
 
+	@deprecate("Use the attribute")
 	def getFlattenedSharingTargetNames(self):
 		""" Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
 		is shared."""
-		sharingTargetNames = set()
+		return set(self._sharingTargets) if self._sharingTargets is not None else set()
 
-		def addToSet( target ):
-			if isinstance( target, basestring ):
-				sharingTargetNames.add( target )
-			elif isinstance( target, collections.Iterable ):
-				for x in target: addToSet( x )
-			else:
-				sharingTargetNames.add( target.username )
-
-		for target in self.sharingTargets:
-			addToSet( target )
-
-		return sharingTargetNames
-
-	flattenedSharingTargetNames = CachedProperty( getFlattenedSharingTargetNames, '_sharingTargets' )
+	flattenedSharingTargetNames = property( getFlattenedSharingTargetNames )
+	sharingTargets = property( getFlattenedSharingTargetNames )
