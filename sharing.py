@@ -685,7 +685,9 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 	def getFlattenedSharingTargetNames(self):
 		""" Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
 		is shared."""
-		return set(self._sharingTargets) if self._sharingTargets is not None else set()
+		# FIXME: The getattr isn't necessary except for legacy data. There's someproblem
+		# in the migration that doesn't find all of these
+		return {getattr(x, 'username', x) for x in self._sharingTargets} if self._sharingTargets is not None else set()
 
 	flattenedSharingTargetNames = property( getFlattenedSharingTargetNames )
 	sharingTargets = property( getFlattenedSharingTargetNames )
