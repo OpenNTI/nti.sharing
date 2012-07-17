@@ -656,6 +656,7 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 				replacement_usernames.add( target.username )
 
 		for target in replacement_targets:
+			if target is None: continue
 			addToSet( target )
 
 		if not replacement_targets:
