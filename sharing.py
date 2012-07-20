@@ -659,14 +659,17 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 			if target is None: continue
 			addToSet( target )
 
-		if not replacement_targets:
+		if not replacement_usernames:
 			self.clearSharingTargets()
 			return
 
 		self.addSharingTarget( replacement_usernames )
 		# Now remove any excess
 		replacement_usernames = OOTreeSet( replacement_usernames )
-		for x in BTrees.family64.OO.difference( self._sharingTargets, replacement_usernames ):
+		# If for some reason we don't actually have sharing targets
+		# then this may return None
+		excess_targets = BTrees.family64.OO.difference( self._sharingTargets, replacement_usernames )
+		for x in (excess_targets or ()):
 			self._sharingTargets.remove( x )
 
 
