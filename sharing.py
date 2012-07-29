@@ -1,26 +1,257 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Classes related to managing the sharing process.
 
-import logging
-logger = logging.getLogger( __name__ )
+$Id$
+"""
+from __future__ import print_function, unicode_literals
 
 
-import numbers
+logger = __import__('logging').getLogger( __name__ )
+
 import collections
 
-from zope import interface
 from zope import component
 from zope.deprecation import deprecate
+from zope.cachedescriptors.property import Lazy
 
+from zc import intid as zc_intid
+
+import persistent
 import BTrees
-from BTrees.OOBTree import OOTreeSet, OOBTree
+from BTrees.OOBTree import OOTreeSet
 from ZODB import loglevels
 
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import datastructures
-from nti.dataserver import containers
+#from nti.dataserver import containers
 
-from nti.externalization.persistence import PersistentExternalizableList, PersistentExternalizableWeakList
 from nti.externalization.oids import to_external_ntiid_oid
+
+from nti.utils import sets
+
+# TODO: This all needs refactored. The different pieces need to be broken into
+# different interfaces and adapters, probably using annotations, to get most
+# of this out of the core object structure, and to make more things possible.
+
+def _getObject( intids, intid ):
+	return intids.getObject( intid )
+
+class _SCOSContainerFacade(object):
+	"""
+	Public facade for a single container in
+	shared contained object storage. Exists to hide the details
+	of looking up an object from its intid number.
+	"""
+
+	def __init__( self, iiset ):
+		self._container_set = iiset
+
+	def __iter__( self ):
+		intids = component.queryUtility( zc_intid.IIntIds )
+		for iid in self._container_set:
+			yield intids.getObject( iid )
+
+	def __len__( self ):
+		return len(self._container_set)
+
+class _SCOSContainersFacade(object):
+	"""
+	Transient object to implement the `values` support
+	by returning each actual value wrapped in a :class:`_SCOSContainerFacade`
+	"""
+
+	def __init__( self, _containers ):
+		self._containers = _containers
+
+	def values(self):
+		return (_SCOSContainerFacade( v ) for v in self._containers.values())
+
+_marker = object()
+def _getId( contained, when_none=_marker ):
+	if contained is None and when_none is not _marker:
+		return when_none
+
+	return component.getUtility( zc_intid.IIntIds ).getId( contained )
+
+class _SharedContainedObjectStorage(persistent.Persistent):
+	"""
+	An object that implements something like the interface of :class:`datastructures.ContainedStorage`,
+	but in a simpler form using only intids, and assuming that we never
+	need to look objects up by container/localID pairs.
+	"""
+
+	family = BTrees.family64
+
+	def __init__( self, family=None ):
+		if family is not None:
+			self.family = family
+		else:
+			intids = component.queryUtility( zc_intid.IIntIds )
+			if intids:
+				self.family = intids.family
+
+		# Map from string container ids to self.family.II.TreeSet
+		# The values in the TreeSet are the intids of the shared
+		# objects
+		self._containers = self.family.OO.BTree()
+
+	def __iter__( self ):
+		return iter(self._containers)
+
+	@property
+	def containers(self):
+		"""
+		Returns an object that has a `values` method that iterates
+		the dict-like (immutable) containers.
+		"""
+		return _SCOSContainersFacade( self._containers )
+
+	def _check_contained_object_for_storage( self, contained ):
+		datastructures.check_contained_object_for_storage( contained )
+
+	def addContainedObject( self, contained ):
+		self._check_contained_object_for_storage( contained )
+
+		container_set = self._containers.get( contained.containerId )
+		if container_set is None:
+			container_set = self.family.II.TreeSet()
+			self._containers[contained.containerId] = container_set
+		container_set.add( _getId( contained ) )
+		return contained
+
+	def deleteEqualContainedObject( self, contained, log_level=None ):
+		self._check_contained_object_for_storage( contained )
+		container_set = self._containers.get( contained.containerId )
+		if container_set is not None:
+			if sets.discard_p( container_set, _getId( contained ) ):
+				return contained
+
+	def getContainer( self, containerId, defaultValue=None ):
+		container_set = self._containers.get( containerId )
+		return _SCOSContainerFacade( container_set ) if container_set is not None else defaultValue
+
+import struct
+def _time_to_64bit_int( value ):
+	if value is None: # pragma: no cover
+		raise ValueError("For consistency, you must supply the lastModified value" )
+	# ! means network byte order, in case we cross architectures
+	# anywhere (doesn't matter), but also causes the sizes to be
+	# standard, which may matter between 32 and 64 bit machines
+	# Q is 64-bit unsigned int, d is 64-bit double
+	return struct.unpack( b'!Q', struct.pack( b'!d', value ) )[0]
+
+class _SharedStreamCache(persistent.Persistent):
+	"""
+	Implements the stream cache for users. Stores activitystream_change.Change
+	objects, which are not IContained and don't fit anywhere in the traversal
+	tree; hence we avoid the IContained checks.
+
+	We store them keyed by their object's intid. This means that we can only
+	store one change per object: the most recent.
+	"""
+	# TODO: We store Change objects indefinitely while
+	# they are in our stream. This keeps a weak ref to
+	# the object they are holding, which may otherwise go away.
+	# Should we be listening for the intid events and notice when an
+	# intid we care about vanishes?
+	# TODO: Should the originating user own the change? So that
+
+	family = BTrees.family64
+	stream_cache_size = 50
+
+	def __init__( self, family=None ):
+		if family is not None: # pragma: no cover
+			self.family = family
+		else:
+			intids = component.queryUtility( zc_intid.IIntIds )
+			if intids is not None:
+				self.family = intids.family
+
+		# Map from string container ids to self.family.IO.BTree
+		# The keys in the BTree leaves are the intids of the objects,
+		# the corresponding values are the change
+		# TODO: Do this with an IISet and require the Changes to have
+		# intids as well. The question then is: Who owns the Change and
+		# when does it get deleted?
+		self._containers = self.family.OO.BTree()
+
+		# Map from string container ids to self.family.II.BTree
+		# The keys are the float times at which we added a change
+		# When we fill up a container, we pop the oldest entry using
+		# this info, an operation that's efficient on a btree.
+		# The float times are converted to their corresponding 64-bit int
+		# values-as-bits. I believe these are more-or-less monotonically increasing
+		# (TODO: Right?)
+		self._containers_modified = self.family.OO.BTree()
+
+
+	# We use -1 as values for None. This is common in test cases
+	# and possibly for deleted objects (there can only be one of these)
+
+	def addContainedObject( self, change ):
+		for _containers, factory in ( (self._containers_modified, BTrees.family64.II.BTree),
+									  (self._containers, self.family.IO.BTree) ):
+
+			container_map = _containers.get( change.containerId )
+			if container_map is None:
+				container_map = factory()
+				_containers[change.containerId] = container_map
+
+		obj_id = _getId( change.object, -1 )
+		old_change = container_map.get( obj_id )
+		container_map[obj_id] = change
+
+		# Now save the modification info.
+		# Note that container_map is basically a set on change.object, but
+		# we might actually get many different changes for a given object.
+		# that's why we have to get the one we're replacing (if any)
+		# and remove that timestamp from the modified map
+		modified_map = self._containers_modified[change.containerId]
+		if old_change is not None:
+			modified_map.pop( _time_to_64bit_int( old_change.lastModified ), None )
+
+		modified_map[_time_to_64bit_int(change.lastModified)] = obj_id
+
+		# If we're too big, start trimming
+		while len(modified_map) > self.stream_cache_size:
+			oldest_id = modified_map.pop( modified_map.minKey() )
+			container_map.pop( oldest_id ) # If this pop fails, we are somehow corrupted
+
+		return change
+
+	def deleteEqualContainedObject( self, contained, log_level=None ):
+		obj_id = _getId( contained )
+		modified_map = self._containers_modified.get( contained.containerId )
+		if modified_map is not None:
+			modified_map.pop( _time_to_64bit_int( contained.lastModified ), None )
+
+		container_map = self._containers.get( contained.containerId )
+		if container_map is not None:
+			if container_map.pop( obj_id, None ) is not None:
+				return contained
+
+	def clearContainer( self, containerId ):
+		self._containers.pop( containerId, None )
+		self._containers_modified.pop( containerId, None )
+
+	def clear( self ):
+		self._containers.clear()
+		self._containers_modified.clear()
+
+	def getContainer( self, containerId, defaultValue=None ):
+		container_map = self._containers.get( containerId )
+		# TODO: If needed, we could get a 'Last Modified' value for
+		# this returned object using self._containers_modified
+		# NOTE: The returned BTreeItems object does not actually have a
+		# __len__ method, as such; even though len() works just fine on it,
+		# it means that hamcrest has_length does not work
+		return container_map.values() if container_map else defaultValue
+
+	def values( self ):
+		for k in self._containers: # Iter the keys and call getContainer to get wrapping1
+			yield self.getContainer( k )
 
 
 class SharingTargetMixin(object):
@@ -75,48 +306,43 @@ class SharingTargetMixin(object):
 		#quiet ignore.
 
 
-		# For things that are shared explicitly with me, we maintain a structure
-		# that parallels the contained items map. The first level is
-		# from container ID to a list of weak references to shared objects.
-		# (Un-sharing something, which requires removal from an arbitrary
-		# position in the list, should be rare.) Notice that we must NOT
-		# have the shared storage set or use IDs, because these objects
-		# are not owned by us.
-		# TODO: Specialize these data structures
-		self.containersOfShared = datastructures.ContainedStorage( weak=True,
-																   create=False,
-																   containerType=containers.EventlessLastModifiedBTreeContainer,
-																   set_ids=False )
-
-		# For muted conversations, which can be unmuted, there is an
-		# identical structure. References are moved in and out of this
-		# container as conversations are un/muted. The goal of this structure
-		# is to keep reads fast. Only writes--changing the muted status--are slow
-		self.containers_of_muted = datastructures.ContainedStorage( weak=True,
-																   create=False,
-																   containerType=containers.EventlessLastModifiedBTreeContainer,
-																   set_ids=False )
 		# This maintains the strings of external NTIID OIDs whose conversations are muted.
 		self.muted_oids = OOTreeSet()
 
-		# These items are not using 'real' containers, so they don't become parents,
-		# so giving them navigable names is safe (and pretty)
-		self.containersOfShared.__name__ = '++containersOfShared'
-		self.containers_of_muted.__name__ = '++containersOfMuted'
 
-		# A cache of recent items that make of the stream. Going back
-		# further than this requires walking through the containersOfShared.
-		# Map from containerId -> PersistentExternalizableWeakList
-		# TODO: Rethink this. It's terribly inefficient.
-		self.streamCache = OOBTree()
 
-	def _discard( self, s, k ):
-		try:
-			s.remove( k )
-			self._p_changed = True
-			return True
-		except KeyError:
-			return False
+	@Lazy
+	def streamCache(self):
+		"""
+		A cache of recent items that make of the stream. Going back
+		further than this requires walking through the containersOfShared.
+		"""
+		cache = _SharedStreamCache()
+		cache.stream_cache_size = self.MAX_STREAM_SIZE
+		return cache
+
+	@Lazy
+	def containersOfShared(self):
+		"""For things that are shared explicitly with me, we maintain a structure
+		 that parallels the contained items map. The first level is
+		 from container ID to a list of weak references to shared objects.
+		 (Un-sharing something, which requires removal from an arbitrary
+		 position in the list, should be rare.) Notice that we must NOT
+		 have the shared storage set or use IDs, because these objects
+		 are not owned by us.
+		"""
+		# TODO: Might need to set self._p_changed when we do this (cf zope.container.btree)
+		# Might also need to add this object to self._p_jar?
+		return _SharedContainedObjectStorage()
+
+	@Lazy
+	def containers_of_muted(self):
+		""" For muted conversations, which can be unmuted, there is an
+		identical structure. References are moved in and out of this
+		container as conversations are un/muted. The goal of this structure
+		is to keep reads fast. Only writes--changing the muted status--are slow"""
+		return _SharedContainedObjectStorage()
+
 
 	def __manage_mute( self, mute=True ):
 		# TODO: Horribly inefficient
@@ -130,34 +356,20 @@ class SharingTargetMixin(object):
 
 		to_move = []
 		for container in _from.containers.values():
-			if isinstance( container, numbers.Number ): continue
 			for obj in container:
-				# TODO: Temporary migration code. Old objects had lists as `container`
-				# while the new objects are BTrees. Do a database migration when the changes
-				# are finished.
-				if isinstance( obj, basestring ): obj = container[obj]()
-
 				if mute:
 					if self.is_muted( obj ):
 						to_move.append( obj )
 				elif not self.is_muted( obj ):
 					to_move.append( obj )
 
-
 		for x in to_move:
 			_from.deleteEqualContainedObject( x )
 			_to.addContainedObject( x )
 
-			if not mute: continue
+			if mute:
+				self.streamCache.deleteEqualContainedObject( x )
 
-			stream = self.streamCache.get( x.containerId )
-			if stream is not None:
-				change = None
-				for change in stream:
-					if change.object == x:
-						break
-				if change is not None:
-					stream.remove( change )
 
 	def mute_conversation( self, root_ntiid_oid ):
 		self.muted_oids.add( root_ntiid_oid )
@@ -167,7 +379,7 @@ class SharingTargetMixin(object):
 
 
 	def unmute_conversation( self, root_ntiid_oid ):
-		if self._discard( self.muted_oids, root_ntiid_oid ):
+		if sets.discard_p( self.muted_oids, root_ntiid_oid ):
 			# Now unmute anything required
 			self.__manage_mute( mute=False )
 
@@ -206,16 +418,16 @@ class SharingTargetMixin(object):
 			`source` is valid, subclasses may differ (this class doesn't
 			implement ignoring).
 		"""
-		if not source: return False
-		self._discard( self._sources_not_accepted,  source.username )
+		if not source:
+			return False
+		sets.discard( self._sources_not_accepted,  source.username )
 		self._sources_accepted.add( source.username )
-		# FIXME: Why are we having to do this?
-		self._p_changed = True
 		return True
 
 	def stop_accepting_shared_data_from( self, source ):
-		if not source: return False
-		self._discard( self._sources_accepted, source.username )
+		if not source:
+			return False
+		sets.discard( self._sources_accepted, source.username )
 		return True
 
 	@property
@@ -230,15 +442,16 @@ class SharingTargetMixin(object):
 		This method is usually called on the object on behalf of this
 		object (e.g., by the user this object represents).
 		"""
-		if not source: return False
-		self._discard( self._sources_accepted, source.username )
+		if not source:
+			return False
+		sets.discard( self._sources_accepted, source.username )
 		self._sources_not_accepted.add( source.username )
-		self._p_changed = True
 		return True
 
 	def stop_ignoring_shared_data_from( self, source ):
-		if not source: return False
-		self._discard( self._sources_not_accepted, source.username )
+		if not source:
+			return False
+		sets.discard( self._sources_not_accepted, source.username )
 		return True
 
 	def reset_shared_data_from( self, source ):
@@ -251,9 +464,10 @@ class SharingTargetMixin(object):
 		:returns: A truth value of whether or not we accepted the
 			reset. This implementation returns True if source is valid.
 		"""
-		if not source: return False
-		self._discard( self._sources_accepted, source.username )
-		self._discard( self._sources_not_accepted, source.username )
+		if not source:
+			return False
+		sets.discard( self._sources_accepted, source.username )
+		sets.discard( self._sources_not_accepted, source.username )
 
 	def reset_all_shared_data( self ):
 		"""
@@ -268,14 +482,12 @@ class SharingTargetMixin(object):
 		Causes this object to forget all ignored settings.
 		"""
 		self._sources_not_accepted.clear()
-		self._p_changed = True
 
 	def reset_accepted_shared_data( self ):
 		"""
 		Causes this object to forget all accepted users.
 		"""
 		self._sources_accepted.clear()
-		self._p_changed = True
 
 	@property
 	def ignoring_shared_data_from( self ):
@@ -299,16 +511,13 @@ class SharingTargetMixin(object):
 
 	# TODO: In addition to the actual explicitly shared objects that I've
 	# accepted because I'm not ignoring, we need the "incoming" group
-	# for things I haven't yet accepted by are still shared with me.
+	# for things I haven't yet accepted but are still shared with me.
 	def getSharedContainer( self, containerId, defaultValue=() ):
 		"""
 		:return: If the containerId is found, an iterable of callable objects (weak refs);
 			calling the objects will either return the actual shared object, or None.
 		"""
 		result = self.containersOfShared.getContainer( containerId, defaultValue )
-		# TODO: Temporary migration code
-		if isinstance( result, containers.EventlessLastModifiedBTreeContainer ):
-			result = result.values()
 		return result
 
 	def _addSharedObject( self, contained ):
@@ -322,7 +531,7 @@ class SharingTargetMixin(object):
 		# Remove from both muted and normal, just in case
 		result = False
 		for containers in (self.containersOfShared,self.containers_of_muted):
-			# Drop the logging to trace because at least one of these will be missing
+			# Drop the logging to TRACE because at least one of these will be missing
 			result = containers.deleteEqualContainedObject( contained, log_level=loglevels.TRACE ) or result
 		return result
 
@@ -334,19 +543,12 @@ class SharingTargetMixin(object):
 		if self.is_muted( change.object ):
 			return False
 
-		container = self.streamCache.get( change.containerId )
-		if container is None:
-			container = PersistentExternalizableWeakList()
-			self.streamCache[change.containerId] = container
-		if len(container) >= self.MAX_STREAM_SIZE:
-			container.pop( 0 )
-
-		container.append( change )
+		self.streamCache.addContainedObject( change )
 		return True
 
 	def _get_stream_cache_containers( self, containerId ):
 		""" Return a sequence of stream cache containers for the id. """
-		return (self.streamCache.get( containerId, () ),)
+		return (self.streamCache.getContainer( containerId, () ),)
 
 	def getContainedStream( self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE ):
 		# The contained stream is an amalgamation of the traffic explicitly
@@ -384,8 +586,6 @@ class SharingTargetMixin(object):
 				if x.object == item: return True
 			return False
 		for item in self.getSharedContainer( containerId ):
-			# These items are callables, weak refs
-			item = item()
 			if item and item.lastModified > minAge and not dup( item ):
 				change = Change( Change.SHARED, item )
 				change.creator = item.creator or self
@@ -498,7 +698,7 @@ class SharingSourceMixin(SharingTargetMixin):
 
 	def _get_stream_cache_containers( self, containerId ):
 		# start with ours
-		result = [self.streamCache.get( containerId, () )]
+		result = [self.streamCache.getContainer( containerId, () )]
 
 		# add everything we follow. If it's a community, we take the
 		# whole thing (ignores are filtered in the parent method). If
@@ -517,7 +717,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		for comm in self._communities:
 			comm = self.get_entity( comm )
 			if comm is None: continue
-			result.append( [x for x in comm.streamCache.get( containerId, () )
+			result.append( [x for x in comm.streamCache.getContainer( containerId, () )
 							if x is not None and x.creator in persons_following] )
 
 
@@ -543,24 +743,24 @@ class SharingSourceMixin(SharingTargetMixin):
 		communities_seen = []
 		for following in self._following:
 			following = self.get_entity( following )
-			if following is None: continue
+			if following is None:
+				continue
 			if isinstance( following, DynamicSharingTargetMixin ):
 				communities_seen.append( following )
-				for ref in following.getSharedContainer( containerId ):
-					x = ref()
+				for x in following.getSharedContainer( containerId ):
 					if x is not None and not self.is_ignoring_shared_data_from( x.creator ):
-						result.append( ref )
+						result.append( x )
 						result.updateLastModIfGreater( x.lastModified )
 			else:
 				persons_following.append( following )
 
 		for comm in self._communities:
 			comm = self.get_entity( comm )
-			if comm is None or comm in communities_seen: continue
-			for ref in comm.getSharedContainer( containerId ):
-				x = ref()
+			if comm is None or comm in communities_seen:
+				continue
+			for x in comm.getSharedContainer( containerId ):
 				if x and x.creator in persons_following:
-					result.append( ref )
+					result.append( x )
 					result.updateLastModIfGreater( x.lastModified )
 
 		# If we made no modifications, return the default
@@ -600,7 +800,7 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 
 	def clearSharingTargets( self ):
 		if self._sharingTargets is not None:
-			self._sharingTargets.clear()
+			self._sharingTargets.clear() # Preserve existing object
 
 			self.updateLastMod()
 
