@@ -45,18 +45,32 @@ class _SCOSContainerFacade(object):
 	of looking up an object from its intid number.
 	"""
 
-	def __init__( self, iiset ):
+	__parent__ = None
+	__name__ = None
+
+	def __init__( self, iiset, allow_missing=False, parent=None, name=None ):
+		"""
+		:keyword bool allow_missing: If False (the default) then errors will be
+			raised for objects that are in the set but cannot be found by id. If
+			``True``, then they will be silently ignored.
+		"""
 		self._container_set = iiset
+		self._allow_missing = allow_missing
+		if parent:
+			self.__parent__ = parent
+		if name:
+			self.__name__ = name
 
 	def __iter__( self ):
 		intids = component.queryUtility( zc_intid.IIntIds )
 		for iid in self._container_set:
-			__traceback_info__ = iid
+			__traceback_info__ = iid, self.__parent__, self.__name__
 			try:
 				yield intids.getObject( iid )
-			except TypeError:
-				#from IPython.core.debugger import Tracer; Tracer()() ## DEBUG ##
-				continue
+			except KeyError:
+				if not self._allow_missing:
+					raise
+				logger.debug( "Failed to resolve key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
 
 	def __len__( self ):
 		return len(self._container_set)
@@ -67,11 +81,23 @@ class _SCOSContainersFacade(object):
 	by returning each actual value wrapped in a :class:`_SCOSContainerFacade`
 	"""
 
-	def __init__( self, _containers ):
+	__parent__ = None
+	__name__ = None
+
+	def __init__( self, _containers, allow_missing=False, parent=None, name=None ):
 		self._containers = _containers
+		self._allow_missing = allow_missing
+		if parent:
+			self.__parent__ = parent
+		if name:
+			self.__name__ = name
 
 	def values(self):
-		return (_SCOSContainerFacade( v ) for v in self._containers.values())
+		return (_SCOSContainerFacade( v, allow_missing=self._allow_missing, parent=self, name=k )
+				for k, v in self._containers.items())
+
+	def __repr__( self ):
+		return '<%s %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__)
 
 _marker = object()
 def _getId( contained, when_none=_marker ):
@@ -111,7 +137,7 @@ class _SharedContainedObjectStorage(persistent.Persistent):
 		Returns an object that has a `values` method that iterates
 		the dict-like (immutable) containers.
 		"""
-		return _SCOSContainersFacade( self._containers )
+		return _SCOSContainersFacade( self._containers, allow_missing=True, parent=self, name='SharedContainedObjectStorage' )
 
 	def _check_contained_object_for_storage( self, contained ):
 		datastructures.check_contained_object_for_storage( contained )
@@ -135,7 +161,7 @@ class _SharedContainedObjectStorage(persistent.Persistent):
 
 	def getContainer( self, containerId, defaultValue=None ):
 		container_set = self._containers.get( containerId )
-		return _SCOSContainerFacade( container_set ) if container_set is not None else defaultValue
+		return _SCOSContainerFacade( container_set, allow_missing=True ) if container_set is not None else defaultValue
 
 import struct
 def _time_to_64bit_int( value ):
@@ -917,7 +943,7 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		"""
 		if self._sharingTargets is None:
 			return set()
-		return set( (x.username for x in _SCOSContainerFacade( self._sharingTargets ) ) )
+		return set( (x.username for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True ) ) )
 
 	flattenedSharingTargetNames = property( getFlattenedSharingTargetNames )
 	getFlattenedSharingTargetNames = deprecate("Prefer 'flattenedSharingTargetNames' attribute")(getFlattenedSharingTargetNames)
@@ -933,5 +959,5 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 			return set()
 		# Provide a bit of defense against the intids going away or changing
 		# out from under us
-		return set( (x for x in _SCOSContainerFacade( self._sharingTargets )
+		return set( (x for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True )
 					if x is not None and hasattr( x, 'username') ) )
