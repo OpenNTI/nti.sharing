@@ -25,7 +25,7 @@ from ZODB import loglevels
 
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import datastructures
-#from nti.dataserver import containers
+from nti.dataserver import interfaces as nti_interfaces
 
 from nti.externalization.oids import to_external_ntiid_oid
 
@@ -67,6 +67,10 @@ class _SCOSContainerFacade(object):
 			__traceback_info__ = iid, self.__parent__, self.__name__
 			try:
 				yield intids.getObject( iid )
+			except TypeError:
+				# Raised when we send a string or something, which means we do not actually
+				# have an IISet. This is a sign of an object missed during migration
+				logger.debug( "Incorrect key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
 			except KeyError:
 				if not self._allow_missing:
 					raise
@@ -592,15 +596,21 @@ class SharingTargetMixin(object):
 
 		containers = self._get_stream_cache_containers( containerId )
 
+		change_objects = set()
 		def add( item, lm=None ):
 			lm = lm or item.lastModified
 			result.append( item )
 			result.updateLastModIfGreater( lm )
+			change_objects.add( item.object )
+
+		def dup( change_object ):
+			return change_object in change_objects
 
 		for container in containers:
 			for item in container:
 				if (item and item.lastModified > minAge
-					and not self.is_ignoring_shared_data_from( item.creator ) ):
+					and not self.is_ignoring_shared_data_from( item.creator )
+					and not dup(item.object)):
 					add( item )
 
 					if len( result ) > maxCount:
@@ -612,10 +622,7 @@ class SharingTargetMixin(object):
 		# follow. If not, we try to fill in with everything shared with us/followed by us
 		# being careful to avoid duplicating things present in the stream
 		# TODO: We've lost change information for these items.
-		def dup( item ):
-			for x in result:
-				if x.object == item: return True
-			return False
+
 		for item in self.getSharedContainer( containerId ):
 			if item and item.lastModified > minAge and not dup( item ):
 				change = Change( Change.SHARED, item )
@@ -632,15 +639,22 @@ class SharingTargetMixin(object):
 		# We'll we've done the best that we can.
 		return result
 
-	def _acceptIncomingChange( self, change ):
+	def _acceptIncomingChange( self, change, direct=True ):
 		"""
+		:keyword bool direct: If ``True`` (the default) then this change
+			is directly targeted toward this object. If false, then the change
+			is indirect and was targeted toward some group or community this object
+			is a member of. This method only adds shared objects for direct targets;
+			all changes are added to the stream.
 		:return: A value indicating if the change was actually accepted or
-		is muted.
+			is muted.
 		"""
 		accepted = self._addToStream( change )
-		# TODO: What's the right check here?
-		if not hasattr( change.object, 'username' ):
-			self._addSharedObject( change.object )
+
+		if direct:
+			# TODO: What's the right check here?
+			if not hasattr( change.object, 'username' ):
+				self._addSharedObject( change.object )
 		return accepted
 
 	def _noticeChange( self, change ):
@@ -649,13 +663,14 @@ class SharingTargetMixin(object):
 		# we double check to be sure--DELETES must always go through.
 
 		if change.type in (Change.CREATED,Change.SHARED):
-			if (change.object is not None
-				and change.object.isSharedWith( self )
-				and self.is_accepting_shared_data_from( change.creator )) :
-				self._acceptIncomingChange( change )
+			if change.object is not None and self.is_accepting_shared_data_from( change.creator ):
+				if change.object.isSharedDirectlyWith( self ):
+					self._acceptIncomingChange( change )
+				elif change.object.isSharedIndirectlyWith( self ):
+					self._acceptIncomingChange( change, direct=False )
 		elif change.type == Change.MODIFIED:
 			if change.object is not None:
-				if change.object.isSharedWith( self ):
+				if change.object.isSharedDirectlyWith( self ):
 					# NOTE: Each change is going into the stream
 					# leading to the possibility of multiple of the same objects
 					# in the stream.
@@ -666,6 +681,8 @@ class SharingTargetMixin(object):
 					# order matters
 					self._addToStream( change )
 					self._addSharedObject( change.object )
+				elif change.object.isSharedIndirectlyWith( self ):
+					self._addToStream( change )
 				else:
 					# FIXME: Badly linear
 					self._removeSharedObject( change.object )
@@ -924,9 +941,11 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 			self._sharingTargets.remove( x )
 
 
-	def isSharedWith( self, wants ):
-		""" Checks if we are shared with `wants`, which must be a
-		Principal."""
+	def isSharedDirectlyWith( self, wants ):
+		"""
+		Checks if we are directly shared with `wants`, which must be a
+		Principal.
+		"""
 		if not self._sharingTargets:
 			return False
 
@@ -935,6 +954,18 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		except KeyError:
 			pass
 
+	def isSharedIndirectlyWith( self, wants ):
+		"""
+		Checks if we are indirectly shared with `wants` (a Principal).
+		"""
+
+		if not self._sharingTargets:
+			return False
+
+		for target in self.sharingTargets:
+			for username in nti_interfaces.IUsernameIterable( target, () ):
+				if username == wants.username:
+					return True
 
 	def getFlattenedSharingTargetNames(self):
 		"""
@@ -943,7 +974,7 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		"""
 		if self._sharingTargets is None:
 			return set()
-		return set( (x.username for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True ) ) )
+		return set( (x.username for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' ) ) )
 
 	flattenedSharingTargetNames = property( getFlattenedSharingTargetNames )
 	getFlattenedSharingTargetNames = deprecate("Prefer 'flattenedSharingTargetNames' attribute")(getFlattenedSharingTargetNames)
@@ -959,5 +990,5 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 			return set()
 		# Provide a bit of defense against the intids going away or changing
 		# out from under us
-		return set( (x for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True )
+		return set( (x for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' )
 					if x is not None and hasattr( x, 'username') ) )
