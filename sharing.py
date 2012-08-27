@@ -744,6 +744,12 @@ class SharingSourceMixin(SharingTargetMixin):
 		""" :returns: Iterable names of communities we belong to. """
 		return set(self._communities)
 
+	def _get_dynamic_sharing_targets_for_read( self ):
+		for comm in self._communities:
+			comm = self.get_entity( comm )
+			if comm:
+				yield comm
+
 	def _get_stream_cache_containers( self, containerId ):
 		# start with ours
 		result = [self.streamCache.getContainer( containerId, () )]
@@ -762,9 +768,7 @@ class SharingSourceMixin(SharingTargetMixin):
 			else:
 				persons_following.append( following )
 
-		for comm in self._communities:
-			comm = self.get_entity( comm )
-			if comm is None: continue
+		for comm in self._get_dynamic_sharing_targets_for_read():
 			result.append( [x for x in comm.streamCache.getContainer( containerId, () )
 							if x is not None and x.creator in persons_following] )
 
@@ -802,9 +806,9 @@ class SharingSourceMixin(SharingTargetMixin):
 			else:
 				persons_following.append( following )
 
-		for comm in self._communities:
-			comm = self.get_entity( comm )
-			if comm is None or comm in communities_seen:
+
+		for comm in self._get_dynamic_sharing_targets_for_read():
+			if comm in communities_seen:
 				continue
 			for x in comm.getSharedContainer( containerId ):
 				if x and x.creator in persons_following:
