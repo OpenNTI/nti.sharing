@@ -344,7 +344,12 @@ class SharingTargetMixin(object):
 		# This maintains the strings of external NTIID OIDs whose conversations are muted.
 		self.muted_oids = OOTreeSet()
 
-
+	# TODO: With the @Lazy properties, it's not clear if we need to set
+	# self._p_changed to true when they run (cf zope.container.btree).
+	# Might also need to add this object to self._p_jar?
+	# There's some indication that this might be required in RelStorage, but
+	# not ZEO/FileStorage? Some shared data seems to disappear in thos
+	# cases?
 
 	@Lazy
 	def streamCache(self):
@@ -354,6 +359,9 @@ class SharingTargetMixin(object):
 		"""
 		cache = _SharedStreamCache()
 		cache.stream_cache_size = self.MAX_STREAM_SIZE
+		self._p_changed = True
+		if self._p_jar:
+			self._p_jar.add( cache )
 		return cache
 
 	@Lazy
@@ -366,9 +374,11 @@ class SharingTargetMixin(object):
 		 have the shared storage set or use IDs, because these objects
 		 are not owned by us.
 		"""
-		# TODO: Might need to set self._p_changed when we do this (cf zope.container.btree)
-		# Might also need to add this object to self._p_jar?
-		return _SharedContainedObjectStorage()
+		self._p_changed = True
+		result = _SharedContainedObjectStorage()
+		if self._p_jar:
+			self._p_jar.add( result )
+		return result
 
 	@Lazy
 	def containers_of_muted(self):
@@ -376,7 +386,11 @@ class SharingTargetMixin(object):
 		identical structure. References are moved in and out of this
 		container as conversations are un/muted. The goal of this structure
 		is to keep reads fast. Only writes--changing the muted status--are slow"""
-		return _SharedContainedObjectStorage()
+		self._p_changed = True
+		result = _SharedContainedObjectStorage()
+		if self._p_jar:
+			self._p_jar.add( result )
+		return result
 
 
 	def __manage_mute( self, mute=True ):
