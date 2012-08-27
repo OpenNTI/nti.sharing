@@ -70,7 +70,7 @@ class _SCOSContainerFacade(object):
 			except TypeError:
 				# Raised when we send a string or something, which means we do not actually
 				# have an IISet. This is a sign of an object missed during migration
-				logger.debug( "Incorrect key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
+				logger.log( loglevels.TRACE, "Incorrect key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
 			except KeyError:
 				if not self._allow_missing:
 					raise
