@@ -77,7 +77,7 @@ class _SCOSContainerFacade(object):
 			except KeyError:
 				if not self._allow_missing:
 					raise
-				logger.debug( loglevels.TRACE, "Failed to resolve key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
+				logger.log( loglevels.TRACE, "Failed to resolve key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
 
 	def __len__( self ):
 		return len(self._container_set)
