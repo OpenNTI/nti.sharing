@@ -16,6 +16,7 @@ from zope import component
 from zope.deprecation import deprecate
 from zope.cachedescriptors.property import Lazy
 
+
 from zc import intid as zc_intid
 
 import persistent
@@ -70,11 +71,13 @@ class _SCOSContainerFacade(object):
 			except TypeError:
 				# Raised when we send a string or something, which means we do not actually
 				# have an IISet. This is a sign of an object missed during migration
+				if not self._allow_missing:
+					raise
 				logger.log( loglevels.TRACE, "Incorrect key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
 			except KeyError:
 				if not self._allow_missing:
 					raise
-				logger.debug( "Failed to resolve key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
+				logger.debug( loglevels.TRACE, "Failed to resolve key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
 
 	def __len__( self ):
 		return len(self._container_set)
@@ -994,7 +997,9 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 			return set()
 		return set( (x.username for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' ) ) )
 
-	flattenedSharingTargetNames = property( getFlattenedSharingTargetNames )
+	# It would be nice to use CachedProperty here, but it doesn't quite play right with
+	# object-values for dependent keys
+	flattenedSharingTargetNames = property(getFlattenedSharingTargetNames) #CachedProperty( getFlattenedSharingTargetNames, '_sharingTargets' )
 	getFlattenedSharingTargetNames = deprecate("Prefer 'flattenedSharingTargetNames' attribute")(getFlattenedSharingTargetNames)
 
 
