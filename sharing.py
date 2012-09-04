@@ -257,6 +257,12 @@ class _SharedStreamCache(persistent.Persistent):
 			oldest_id = modified_map.pop( modified_map.minKey() )
 			container_map.pop( oldest_id ) # If this pop fails, we are somehow corrupted
 
+		# Change objects can wind up sent to multiple people in different shards
+		# They need to have an owning shard, otherwise it's not possible to pick
+		# one if they are reachable from multiple. So we add them here
+		if self._p_jar and getattr( change, '_p_jar', self ) is None:
+			self._p_jar.add( change )
+
 		return change
 
 	def deleteEqualContainedObject( self, contained, log_level=None ):
