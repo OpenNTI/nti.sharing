@@ -297,6 +297,12 @@ class _SharedStreamCache(persistent.Persistent):
 		for k in self._containers: # Iter the keys and call getContainer to get wrapping1
 			yield self.getContainer( k )
 
+	def keys( self ):
+		return self._containers.keys()
+
+	def __iter__( self ):
+		return iter(self._containers)
+
 
 class SharingTargetMixin(object):
 	"""
