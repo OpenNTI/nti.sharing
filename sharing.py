@@ -610,6 +610,9 @@ class SharingTargetMixin(object):
 		self.streamCache.addContainedObject( change )
 		return True
 
+	def _removeFromStream( self, change ):
+		self.streamCache.deleteEqualContainedObject( change.object )
+
 	def _get_stream_cache_containers( self, containerId ):
 		""" Return a sequence of stream cache containers for the id. """
 		return (self.streamCache.getContainer( containerId, () ),)
@@ -722,6 +725,10 @@ class SharingTargetMixin(object):
 			removed = self._removeSharedObject( change.object )
 			if removed is False or removed is None: # Explicit, not falsey
 				logger.warn( "Incoming deletion for object not found %s", change )
+			# Hmm. We also feel like we want to remove the entire thing from the stream
+			# as well, erasing all evidence that it ever
+			# existed
+			self._removeFromStream( change )
 		elif change.type == Change.CIRCLED:
 			self._acceptIncomingChange( change )
 		# Do a dual-dispatch to notify complex subscribers that need to know
