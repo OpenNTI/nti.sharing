@@ -733,7 +733,7 @@ class SharingTargetMixin(object):
 			self._acceptIncomingChange( change )
 		# Do a dual-dispatch to notify complex subscribers that need to know
 		# the destination user
-		component.subscribers( (self, change), None )
+		component.handle( self, change )
 
 
 class SharingSourceMixin(SharingTargetMixin):
