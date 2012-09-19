@@ -15,7 +15,7 @@ import collections
 from zope import component
 from zope.deprecation import deprecate
 from zope.cachedescriptors.property import Lazy
-
+from zope.container.contained import Contained
 
 from zc import intid as zc_intid
 
@@ -113,7 +113,7 @@ def _getId( contained, when_none=_marker ):
 
 	return component.getUtility( zc_intid.IIntIds ).getId( contained )
 
-class _SharedContainedObjectStorage(persistent.Persistent):
+class _SharedContainedObjectStorage(persistent.Persistent,Contained):
 	"""
 	An object that implements something like the interface of :class:`datastructures.ContainedStorage`,
 	but in a simpler form using only intids, and assuming that we never
@@ -123,6 +123,7 @@ class _SharedContainedObjectStorage(persistent.Persistent):
 	family = BTrees.family64
 
 	def __init__( self, family=None ):
+		super(_SharedContainedObjectStorage,self).__init__()
 		if family is not None:
 			self.family = family
 		else:
@@ -170,6 +171,10 @@ class _SharedContainedObjectStorage(persistent.Persistent):
 		container_set = self._containers.get( containerId )
 		return _SCOSContainerFacade( container_set, allow_missing=True ) if container_set is not None else defaultValue
 
+	def __repr__( self ):
+		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
+
+
 import struct
 def _time_to_64bit_int( value ):
 	if value is None: # pragma: no cover
@@ -180,7 +185,7 @@ def _time_to_64bit_int( value ):
 	# Q is 64-bit unsigned int, d is 64-bit double
 	return struct.unpack( b'!Q', struct.pack( b'!d', value ) )[0]
 
-class _SharedStreamCache(persistent.Persistent):
+class _SharedStreamCache(persistent.Persistent,Contained):
 	"""
 	Implements the stream cache for users. Stores activitystream_change.Change
 	objects, which are not IContained and don't fit anywhere in the traversal
@@ -194,12 +199,14 @@ class _SharedStreamCache(persistent.Persistent):
 	# the object they are holding, which may otherwise go away.
 	# Should we be listening for the intid events and notice when an
 	# intid we care about vanishes?
-	# TODO: Should the originating user own the change? So that
+	# TODO: Should the originating user own the change? That way it picks
+	# a shard, and it goes away when the user does
 
 	family = BTrees.family64
 	stream_cache_size = 50
 
 	def __init__( self, family=None ):
+		super(_SharedStreamCache,self).__init__()
 		if family is not None: # pragma: no cover
 			self.family = family
 		else:
@@ -224,6 +231,12 @@ class _SharedStreamCache(persistent.Persistent):
 		# (TODO: Right?)
 		self._containers_modified = self.family.OO.BTree()
 
+		# TODO: I'm supposed to be storing a Length object separately and maintaing
+		# it for each BTree, as asking for their len() can be expensive
+
+	def _read_current( self, container ):
+		if self._p_jar and getattr( container, '_p_jar', None ):
+			self._p_jar.readCurrent( container )
 
 	# We use -1 as values for None. This is common in test cases
 	# and possibly for deleted objects (there can only be one of these)
@@ -231,14 +244,13 @@ class _SharedStreamCache(persistent.Persistent):
 	def addContainedObject( self, change ):
 		for _containers, factory in ( (self._containers_modified, BTrees.family64.II.BTree),
 									  (self._containers, self.family.IO.BTree) ):
-
+			self._read_current( _containers )
 			container_map = _containers.get( change.containerId )
+			self._read_current( container_map )
 			if container_map is None:
 				container_map = factory()
 				_containers[change.containerId] = container_map
-
-		if self._p_jar and container_map._p_jar:
-			container_map._p_jar.readCurrent( container_map )
+		# And so at this point, `container_map` is an IOBTree
 
 		obj_id = _getId( change.object, -1 )
 		old_change = container_map.get( obj_id )
@@ -250,8 +262,7 @@ class _SharedStreamCache(persistent.Persistent):
 		# that's why we have to get the one we're replacing (if any)
 		# and remove that timestamp from the modified map
 		modified_map = self._containers_modified[change.containerId]
-		if self._p_jar and modified_map._p_jar:
-			modified_map._p_jar.readCurrent( modified_map )
+
 		if old_change is not None:
 			modified_map.pop( _time_to_64bit_int( old_change.lastModified ), None )
 
@@ -261,30 +272,38 @@ class _SharedStreamCache(persistent.Persistent):
 		while len(modified_map) > self.stream_cache_size:
 			oldest_id = modified_map.pop( modified_map.minKey() )
 			# If this pop fails, we are somehow corrupted, in that our state
-			# doesn't match. It's a relatively minor corruption, however, so
-			# the most it entails is logging, which hopefully captures the Entity
-			# that is having the problem: their stream may need to be cleared
+			# doesn't match. It's a relatively minor corruption, however,
+			# (the worst that happens is that the stream cache gets a bit too big) so
+			# the most it entails is logging.
+			# In the future we may need to rebuild datastructures that exhibit
+			# this problem. their stream may need to be cleared
 			try:
 				container_map.pop( oldest_id )
 			except KeyError:
-				logger.debug( "Failed to pop oldest id %s; state may be corrupt.", oldest_id )
+				logger.debug( "Failed to pop oldest object with id %s in %s",
+							  oldest_id, self )
 
 		# Change objects can wind up sent to multiple people in different shards
 		# They need to have an owning shard, otherwise it's not possible to pick
 		# one if they are reachable from multiple. So we add them here
+		# TODO: See comments above about making the user own these
 		if self._p_jar and getattr( change, '_p_jar', self ) is None:
 			self._p_jar.add( change )
 
 		return change
 
 	def deleteEqualContainedObject( self, contained, log_level=None ):
+		self._read_current( self._containers_modified )
 		obj_id = _getId( contained )
 		modified_map = self._containers_modified.get( contained.containerId )
 		if modified_map is not None:
+			self._read_current( modified_map )
 			modified_map.pop( _time_to_64bit_int( contained.lastModified ), None )
 
+		self._read_current( self._containers )
 		container_map = self._containers.get( contained.containerId )
 		if container_map is not None:
+			self._read_current( container_map )
 			if container_map.pop( obj_id, None ) is not None:
 				return contained
 
@@ -314,6 +333,9 @@ class _SharedStreamCache(persistent.Persistent):
 
 	def __iter__( self ):
 		return iter(self._containers)
+
+	def __repr__( self ):
+		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
 
 
 class SharingTargetMixin(object):
@@ -371,12 +393,9 @@ class SharingTargetMixin(object):
 		# This maintains the strings of external NTIID OIDs whose conversations are muted.
 		self.muted_oids = OOTreeSet()
 
-	# TODO: With the @Lazy properties, it's not clear if we need to set
-	# self._p_changed to true when they run (cf zope.container.btree).
-	# Might also need to add this object to self._p_jar?
-	# There's some indication that this might be required in RelStorage, but
-	# not ZEO/FileStorage? Some shared data seems to disappear in thos
-	# cases?
+	# Note that @Lazy mutates the __dict__ directly, bypassing
+	# __setattribute__, which means we are responsible for marking
+	# ourself changed
 
 	@Lazy
 	def streamCache(self):
@@ -389,6 +408,8 @@ class SharingTargetMixin(object):
 		self._p_changed = True
 		if self._p_jar:
 			self._p_jar.add( cache )
+		cache.__parent__ = self
+		cache.__name__ = 'streamCache'
 		return cache
 
 	@Lazy
@@ -405,6 +426,8 @@ class SharingTargetMixin(object):
 		result = _SharedContainedObjectStorage()
 		if self._p_jar:
 			self._p_jar.add( result )
+		result.__parent__ = self
+		result.__name__ = 'containersOfShared'
 		return result
 
 	@Lazy
@@ -417,6 +440,10 @@ class SharingTargetMixin(object):
 		result = _SharedContainedObjectStorage()
 		if self._p_jar:
 			self._p_jar.add( result )
+
+		result.__parent__ = self
+		result.__name__ = 'containers_of_muted'
+
 		return result
 
 
