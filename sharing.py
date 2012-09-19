@@ -237,6 +237,9 @@ class _SharedStreamCache(persistent.Persistent):
 				container_map = factory()
 				_containers[change.containerId] = container_map
 
+		if self._p_jar and container_map._p_jar:
+			container_map._p_jar.readCurrent( container_map )
+
 		obj_id = _getId( change.object, -1 )
 		old_change = container_map.get( obj_id )
 		container_map[obj_id] = change
@@ -247,6 +250,8 @@ class _SharedStreamCache(persistent.Persistent):
 		# that's why we have to get the one we're replacing (if any)
 		# and remove that timestamp from the modified map
 		modified_map = self._containers_modified[change.containerId]
+		if self._p_jar and modified_map._p_jar:
+			modified_map._p_jar.readCurrent( modified_map )
 		if old_change is not None:
 			modified_map.pop( _time_to_64bit_int( old_change.lastModified ), None )
 
@@ -255,7 +260,14 @@ class _SharedStreamCache(persistent.Persistent):
 		# If we're too big, start trimming
 		while len(modified_map) > self.stream_cache_size:
 			oldest_id = modified_map.pop( modified_map.minKey() )
-			container_map.pop( oldest_id ) # If this pop fails, we are somehow corrupted
+			# If this pop fails, we are somehow corrupted, in that our state
+			# doesn't match. It's a relatively minor corruption, however, so
+			# the most it entails is logging, which hopefully captures the Entity
+			# that is having the problem: their stream may need to be cleared
+			try:
+				container_map.pop( oldest_id )
+			except KeyError:
+				logger.debug( "Failed to pop oldest id %s; state may be corrupt.", oldest_id )
 
 		# Change objects can wind up sent to multiple people in different shards
 		# They need to have an owning shard, otherwise it's not possible to pick
@@ -604,6 +616,7 @@ class SharingTargetMixin(object):
 		:return: A boolean indicating whether the change was accepted
 		or muted.
 		"""
+		__traceback_info__ = self
 		if self.is_muted( change.object ):
 			return False
 
