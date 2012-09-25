@@ -764,7 +764,7 @@ class SharingTargetMixin(object):
 			# can force the matter
 			removed = self._removeSharedObject( change.object )
 			if removed is False or removed is None: # Explicit, not falsey
-				logger.warn( "Incoming deletion for object not found %s", change )
+				logger.warn( "Incoming deletion (%s) didn't find a shared object in %s", change, self )
 			# Hmm. We also feel like we want to remove the entire thing from the stream
 			# as well, erasing all evidence that it ever
 			# existed
