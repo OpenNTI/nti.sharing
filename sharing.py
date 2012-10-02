@@ -63,7 +63,7 @@ class _SCOSContainerFacade(object):
 			self.__name__ = name
 
 	def __iter__( self ):
-		intids = component.queryUtility( zc_intid.IIntIds )
+		intids = component.getUtility( zc_intid.IIntIds )
 		for iid in self._container_set:
 			__traceback_info__ = iid, self.__parent__, self.__name__
 			try:
