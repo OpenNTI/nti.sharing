@@ -11,6 +11,7 @@ from __future__ import print_function, unicode_literals
 logger = __import__('logging').getLogger( __name__ )
 
 import collections
+import heapq
 
 from zope import component
 from zope.deprecation import deprecate
@@ -662,7 +663,8 @@ class SharingTargetMixin(object):
 		# to us, plus the traffic of things we're following. We merge these together and return
 		# just the ones that fit the criteria.
 		# TODO: What's the right heuristic here? Seems like things shared directly with me
-		# may be more important than things I'm following...
+		# may be more important than things I'm following, but only before some age cutoff. For the
+		# moment, we are actually merging all this activity together, regardless of source
 		# TODO: These data structures could and should be optimized for this.
 		result = datastructures.LastModifiedCopyingUserList()
 
@@ -678,15 +680,44 @@ class SharingTargetMixin(object):
 		def dup( change_object ):
 			return change_object in change_objects
 
-		for container in containers:
-			for item in container:
-				if (item and item.lastModified > minAge
-					and not self.is_ignoring_shared_data_from( item.creator )
-					and not dup(item.object)):
-					add( item )
+		def _make_largest_container( container, of_size, extra_pred=None ):
+			container = (item for item in container
+						 if item and item.lastModified > minAge
+						 and not self.is_ignoring_shared_data_from( item.creator )
+						 and (extra_pred is None or extra_pred(item)))
+			# Now take the largest of those, sorted by modification
+			# (We actually take more than the stream size, to try to ensure that we
+			# can fulfill the request)
+			container = heapq.nlargest( of_size, container, key=lambda i: i.lastModified )
+			return container
 
-					if len( result ) > maxCount:
-						return result
+		# First, get the N largest of all the containers, and then
+		most_recent_in_containers = []
+		for container in containers:
+			# If the container is potentially larger than the stream size,
+			# we want to take only its most recent items, and then only the ones that
+			# match our other criteria
+			# Start by defining a generator to extract items that match
+
+			# Now take the largest of those, sorted by modification
+			# (We actually take more than the stream size, to try to ensure that we
+			# can fulfill the request)
+			container = _make_largest_container( container, maxCount * 2 )
+
+			# In order to heapq.merge, these have to be smallest to largest
+			container.reverse()
+			most_recent_in_containers.append( ((item.lastModified, item) for item in container) )
+
+		for _, item in reversed(list(heapq.merge(*most_recent_in_containers))):
+			if not dup( item.object ):
+				add( item )
+
+				if len( result ) >= maxCount:
+					break
+
+		if len( result ) >= maxCount:
+			return result
+
 
 		# If we get here, then we weren't able to satisfy the request from the caches. Must walk
 		# through the shared items directly.
@@ -694,21 +725,21 @@ class SharingTargetMixin(object):
 		# follow. If not, we try to fill in with everything shared with us/followed by us
 		# being careful to avoid duplicating things present in the stream
 		# TODO: We've lost change information for these items.
+		extras_needed = maxCount - len(result)
+		for item in _make_largest_container( self.getSharedContainer( containerId ), extras_needed, lambda x: not dup(x) ):
+			change = Change( Change.SHARED, item )
+			change.creator = item.creator or self
 
-		for item in self.getSharedContainer( containerId ):
-			if item and item.lastModified > minAge and not dup( item ):
-				change = Change( Change.SHARED, item )
-				change.creator = item.creator or self
+			# Since we're fabricating a change for this item,
+			# we know it can be no later than when the item itself was last changed
+			change.lastModified = item.lastModified
 
-				# Since we're fabricating a change for this item,
-				# we know it can be no later than when the item itself was last changed
-				change.lastModified = item.lastModified
+			add( change, item.lastModified )
 
-				add( change, item.lastModified )
+			if len(result) >= maxCount:
+				break
 
-				if len(result) > maxCount:
-					break
-		# We'll we've done the best that we can.
+		# Well we've done the best that we can.
 		return result
 
 	def _acceptIncomingChange( self, change, direct=True ):
@@ -827,7 +858,8 @@ class SharingSourceMixin(SharingTargetMixin):
 				yield comm
 
 	def _get_stream_cache_containers( self, containerId ):
-		# start with ours
+		# start with ours. This ensures things targeted toward us
+		# have the highest chance of making it in the cap if we go in order.
 		result = [self.streamCache.getContainer( containerId, () )]
 
 		# add everything we follow. If it's a community, we take the
