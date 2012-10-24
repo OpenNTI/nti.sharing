@@ -13,12 +13,11 @@ logger = __import__('logging').getLogger( __name__ )
 import collections
 import heapq
 
+import zope.intid
 from zope import component
 from zope.deprecation import deprecate
 from zope.cachedescriptors.property import Lazy
 from zope.container.contained import Contained
-
-from zc import intid as zc_intid
 
 import persistent
 import BTrees
@@ -64,7 +63,7 @@ class _SCOSContainerFacade(object):
 			self.__name__ = name
 
 	def __iter__( self ):
-		intids = component.getUtility( zc_intid.IIntIds )
+		intids = component.getUtility( zope.intid.IIntIds )
 		for iid in self._container_set:
 			__traceback_info__ = iid, self.__parent__, self.__name__
 			try:
@@ -112,7 +111,7 @@ def _getId( contained, when_none=_marker ):
 	if contained is None and when_none is not _marker:
 		return when_none
 
-	return component.getUtility( zc_intid.IIntIds ).getId( contained )
+	return component.getUtility( zope.intid.IIntIds ).getId( contained )
 
 class _SharedContainedObjectStorage(persistent.Persistent,Contained):
 	"""
@@ -128,7 +127,7 @@ class _SharedContainedObjectStorage(persistent.Persistent,Contained):
 		if family is not None:
 			self.family = family
 		else:
-			intids = component.queryUtility( zc_intid.IIntIds )
+			intids = component.queryUtility( zope.intid.IIntIds )
 			if intids:
 				self.family = intids.family
 
@@ -211,7 +210,7 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		if family is not None: # pragma: no cover
 			self.family = family
 		else:
-			intids = component.queryUtility( zc_intid.IIntIds )
+			intids = component.queryUtility( zope.intid.IIntIds )
 			if intids is not None:
 				self.family = intids.family
 
@@ -947,9 +946,9 @@ class DynamicSharingTargetMixin(SharingTargetMixin):
 		super(DynamicSharingTargetMixin,self).__init__( *args, **kwargs )
 
 def _ii_family():
-	intids = component.queryUtility( zc_intid.IIntIds )
+	intids = component.queryUtility( zope.intid.IIntIds )
 	if intids:
-		 return intids.family
+		return intids.family
 	return BTrees.family64
 
 
