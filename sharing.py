@@ -1084,7 +1084,7 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		"""
 		if self._sharingTargets is None:
 			return set()
-		return set( (x.username for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' ) ) )
+		return set( (x.username for x in self.sharingTargets) )
 
 	# It would be nice to use CachedProperty here, but it doesn't quite play right with
 	# object-values for dependent keys
