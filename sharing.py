@@ -12,6 +12,7 @@ logger = __import__('logging').getLogger( __name__ )
 
 import collections
 import heapq
+import six
 
 from zope import component
 from zope.deprecation import deprecate
@@ -32,6 +33,7 @@ from nti.dataserver import interfaces as nti_interfaces
 from nti.externalization.oids import to_external_ntiid_oid
 
 from nti.utils import sets
+from nti.utils.property import alias
 
 # TODO: This all needs refactored. The different pieces need to be broken into
 # different interfaces and adapters, probably using annotations, to get most
@@ -338,6 +340,19 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 	def __repr__( self ):
 		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
 
+def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
+	if name not in self.__dict__:
+		return ()
+	return {wref().username for wref in getattr(self,name) if wref() is not None}
+
+def _iterable_of_entities_from_named_lazy_set_of_wrefs(self, name):
+	if name not in self.__dict__:
+		return ()
+	return (wref() for wref in getattr(self,name) if wref() is not None)
+
+def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
+	if name in self.__dict__:
+		sets.discard( getattr( self, name ), nti_interfaces.IWeakRef( entity ) )
 
 class SharingTargetMixin(object):
 	"""
@@ -369,30 +384,17 @@ class SharingTargetMixin(object):
 	relationship. The source implicitly granted permission when it shared
 	something with the community.
 
+
+	.. todo:: This needs to be reworked to not require inheritance
+		and direct storage on the entity objects. It can be pulled apart
+		into smaller pieces.
+
 	"""
 
 	MAX_STREAM_SIZE = 50
 
 	def __init__( self, *args, **kwargs ):
 		super(SharingTargetMixin,self).__init__( *args, **kwargs )
-		# Notice that I'm still working out
-		# how best to reference other persistent objects, by
-		# username/id or by weakrefs to the object itself. Thus
-		# the inconsistencies.
-
-		self._sources_not_accepted = OOTreeSet()
-		#Set us usernames we won't accept shared data from. Also applies to
-		#things pulled from communities.
-
-		self._sources_accepted = OOTreeSet()
-		#Set of usernames that we'll accept explicitly shared data
-		#from. Notice that acceptance/not acceptance is completely on
-		#our side of things; the sender never knows--our 'ignore' is a
-		#quiet ignore.
-
-
-		# This maintains the strings of external NTIID OIDs whose conversations are muted.
-		self.muted_oids = OOTreeSet()
 
 	# Note that @Lazy mutates the __dict__ directly, bypassing
 	# __setattribute__, which means we are responsible for marking
@@ -447,6 +449,37 @@ class SharingTargetMixin(object):
 
 		return result
 
+	def _lazy_create_ootreeset_for_wref(self):
+		self._p_changed = True
+		result = OOTreeSet()
+		if self._p_jar:
+			self._p_jar.add( result )
+		return result
+
+	@Lazy
+	def _muted_oids(self):
+		"""
+		Maintains the strings of external NTIID OIDS whose conversations are
+		muted.
+		"""
+		return self._lazy_create_ootreeset_for_wref()
+
+	@Lazy
+	def _entities_not_accepted(self):
+		"""
+		Set of weak refs to entities that we won't accept shared data from.
+		Also applies to things pulled from communities.
+		"""
+		return self._lazy_create_ootreeset_for_wref()
+
+	@Lazy
+	def _entities_accepted(self):
+		"""
+		Set of weak refs to entities that we'll accept explicitly shared data from.
+		Notice that acceptance/not acceptance is completely on our side of things;
+		the sender never knows---our 'ignore' is a quiet ignore.
+		"""
+		return self._lazy_create_ootreeset_for_wref()
 
 	def __manage_mute( self, mute=True ):
 		# TODO: Horribly inefficient
@@ -476,33 +509,36 @@ class SharingTargetMixin(object):
 
 
 	def mute_conversation( self, root_ntiid_oid ):
-		self.muted_oids.add( root_ntiid_oid )
+		self._muted_oids.add( root_ntiid_oid )
 
 		# Now move over anything that is muted
 		self.__manage_mute( )
 
 
 	def unmute_conversation( self, root_ntiid_oid ):
-		if sets.discard_p( self.muted_oids, root_ntiid_oid ):
+		if '_muted_oids' not in self.__dict__:
+			return
+
+		if sets.discard_p( self._muted_oids, root_ntiid_oid ):
 			# Now unmute anything required
 			self.__manage_mute( mute=False )
 
 
 	def is_muted( self, the_object ):
-		if the_object is None:
+		if the_object is None or '_muted_oids' not in self.__dict__:
 			return False
 
-		if getattr( the_object, 'id', self ) in self.muted_oids:
+		if getattr( the_object, 'id', self ) in self._muted_oids:
 			return True
 		ntiid = to_external_ntiid_oid( the_object )
-		if ntiid in self.muted_oids:
+		if ntiid in self._muted_oids:
 			return True
 		reply_ntiid = to_external_ntiid_oid( the_object.inReplyTo ) if hasattr( the_object, 'inReplyTo' ) else None
-		if reply_ntiid in self.muted_oids:
+		if reply_ntiid in self._muted_oids:
 			return True
 		refs_ntiids = [to_external_ntiid_oid(x) for x in the_object.references] if hasattr( the_object, 'references') else ()
 		for x in refs_ntiids:
-			if x in self.muted_oids:
+			if x in self._muted_oids:
 				return True
 
 		return False
@@ -524,20 +560,29 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		sets.discard( self._sources_not_accepted,  source.username )
-		self._sources_accepted.add( source.username )
+		wref = nti_interfaces.IWeakRef( source )
+		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted', wref )
+		self._entities_accepted.add( wref )
 		return True
 
 	def stop_accepting_shared_data_from( self, source ):
 		if not source:
 			return False
-		sets.discard( self._sources_accepted, source.username )
+		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_accepted', source )
 		return True
 
 	@property
+	#@deprecate("Prefer `entities_accepting_shared_data_from`")
 	def accepting_shared_data_from( self ):
 		""" :returns: Iterable names of entities we accept shared data from. """
-		return set(self._sources_accepted)
+		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_entities_accepted' )
+
+	@property
+	def entities_accepting_shared_data_from(self):
+		"""
+		Return an iterable of entities we accept shared data from.
+		"""
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_accepted' )
 
 	def ignore_shared_data_from( self, source ):
 		"""
@@ -548,14 +593,15 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		sets.discard( self._sources_accepted, source.username )
-		self._sources_not_accepted.add( source.username )
+		wref = nti_interfaces.IWeakRef( source )
+		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_accepted', wref )
+		self._entities_not_accepted.add( wref )
 		return True
 
 	def stop_ignoring_shared_data_from( self, source ):
 		if not source:
 			return False
-		sets.discard( self._sources_not_accepted, source.username )
+		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted', source )
 		return True
 
 	def reset_shared_data_from( self, source ):
@@ -570,8 +616,9 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		sets.discard( self._sources_accepted, source.username )
-		sets.discard( self._sources_not_accepted, source.username )
+		wref = nti_interfaces.IWeakRef( source )
+		for k in ("_entities_accepted", '_entities_not_accepted' ):
+			_remove_entity_from_named_lazy_set_of_wrefs( self, k, wref )
 
 	def reset_all_shared_data( self ):
 		"""
@@ -585,33 +632,46 @@ class SharingTargetMixin(object):
 		"""
 		Causes this object to forget all ignored settings.
 		"""
-		self._sources_not_accepted.clear()
+		if '_entities_not_accepted' in self.__dict__:
+			self._entities_not_accepted.clear()
 
 	def reset_accepted_shared_data( self ):
 		"""
 		Causes this object to forget all accepted users.
 		"""
-		self._sources_accepted.clear()
+		if '_entities_accepted' in self.__dict__:
+			self._entities_accepted.clear()
 
 	@property
+	#@deprecate("Prefer `entities_ignoring_shared_data_from`")
 	def ignoring_shared_data_from( self ):
 		""" :returns: Iterable of names of entities we are specifically ignoring shared data from. """
-		return set(self._sources_not_accepted)
+		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted' )
+
+	@property
+	def entities_ignoring_shared_data_from( self ):
+		"""
+		Returns an iterable of entities we are specifically ignoring shared data from.
+		"""
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted' )
 
 	def is_accepting_shared_data_from( self, source ):
 		"""
 		Return if this object is accepting data that is explicitly
 		shared with it by `source`.
 		"""
-		return (source.username if hasattr(source, 'username') else source) in self._sources_accepted
+		# The string path is deprecated
+		return source in self.entities_accepting_shared_data_from or (isinstance(source, six.string_types) and source in self.accepting_shared_data_from)
 
 	def is_ignoring_shared_data_from( self, source ):
 		"""
 		The opposite of :meth:`is_accepting_shared_data_from`
 		"""
 		# Naturally we ignore ourself
-		username = source.username if hasattr(source, 'username') else source
-		return username == self.username or username in self._sources_not_accepted
+		if source is self or self.username == source:
+			return True
+		return source in self.entities_ignoring_shared_data_from or (isinstance( source, six.string_types) and source in self.ignoring_shared_data_from)
+
 
 	# TODO: In addition to the actual explicitly shared objects that I've
 	# accepted because I'm not ignoring, we need the "incoming" group
@@ -815,47 +875,100 @@ class SharingSourceMixin(SharingTargetMixin):
 
 	def __init__( self, *args, **kwargs ):
 		super(SharingSourceMixin,self).__init__( *args, **kwargs )
-		# Notice that I'm still working out
-		# how best to reference other persistent objects, by
-		# username/id or by weakrefs to the object itself. Thus
-		# the inconsistencies.
 
-		self._communities = OOTreeSet()
-		#Set of usernames of communities we belong to.
+	@Lazy
+	def _entities_followed(self):
+		"""
+		Set of weak-refs to entities we want to follow.
+		For users, we will source data specifically
+		from them out of communities we belong to. For communities, we will
+		take all data (with the exception of _entities_not_accepted, of course.
+		"""
+		return self._lazy_create_ootreeset_for_wref()
 
-
-		self._following = OOTreeSet()
-		# Set of entity names we want to follow.
-		# For users, we will source data specifically
-		# from them out of communities we belong to. For communities, we will
-		# take all data (with the exception of _sources_not_accepted, of course.
+	@Lazy
+	def _dynamic_memberships(self):
+		"""
+		Set of weak-refs to things that offer dynamic
+		membership properties for sharing: we can leave and join these
+		at any time. Typically they will be ICommunity objects but they
+		must be IDynamicSharingTarget objects.
+		"""
+		return self._lazy_create_ootreeset_for_wref()
 
 	def follow( self, source ):
 		""" Adds `source` to the list of followers. """
-		self._following.add( source.username )
+		self._entities_followed.add( nti_interfaces.IWeakRef(source) )
 		return True
 
+	def stop_following( self, source ):
+		"""
+		Ensures that `source` is no longer in the list of followers.
+		"""
+		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_followed', source )
+
 	@property
+	#@deprecate("Prefer `entities_followed`")
 	def following(self):
 		""" :returns: Iterable names of entities we are following. """
-		return set(self._following)
-
-	def join_community( self, community ):
-		""" Marks this object as a member of `community.` Does not follow `community`.
-		:returns: Whether we are now following the community. """
-		self._communities.add( community.username )
-		return True
+		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_entities_followed' )
 
 	@property
-	def communities( self ):
-		""" :returns: Iterable names of communities we belong to. """
-		return set(self._communities)
+	def entities_followed(self):
+		"""
+		Iterable of entities we are following.
+		"""
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_followed' )
+
+	@deprecate("Prefer the `record_dynamic_membership` method.")
+	def join_community( self, community ):
+		""" Marks this object as a member of `community.` Does not follow `community`.
+		:returns: Whether we are now a member of the community. """
+		self.record_dynamic_membership( community )
+		return True
+
+	def record_dynamic_membership(self, dynamic_sharing_target ):
+		"""
+		Records the fact that this object is a member of the given dynamic sharing target.
+		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
+		"""
+		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
+		self._dynamic_memberships.add( nti_interfaces.IWeakRef( dynamic_sharing_target ) )
+
+	def record_no_longer_dynamic_member( self, dynamic_sharing_target ):
+		"""
+		Records the fact that this object is no longer a member of the given
+		dynamic sharing target.
+
+		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
+		"""
+		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
+		if '_dynamic_memberships' in self.__dict__:
+			sets.discard( self._dynamic_memberships, nti_interfaces.IWeakRef( dynamic_sharing_target ) )
+
+
+	@property
+	@deprecate("Prefer `dynamic_memberships` or `usernames_of_dynamic_memberships`")
+	def communities(self):
+		return self.usernames_of_dynamic_memberships
+
+	@property
+	def dynamic_memberships(self):
+		"""
+		An iterable of :class:`nti_interfaces.IDynamicSharingTarget` that we are members of.
+		"""
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
+
+	@property
+	def usernames_of_dynamic_memberships( self ):
+		""" :returns: Iterable names of dynamic sharing targets we belong to. """
+		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
 
 	def _get_dynamic_sharing_targets_for_read( self ):
-		for comm in self._communities:
-			comm = self.get_entity( comm )
-			if comm:
-				yield comm
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
+
+	def _get_entities_followed_for_read( self ):
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_followed' )
 
 	def _get_stream_cache_containers( self, containerId ):
 		# start with ours. This ensures things targeted toward us
@@ -867,14 +980,13 @@ class SharingSourceMixin(SharingTargetMixin):
 		# it's a person, we take stuff they've shared to communities
 		# we're a member of
 
-		persons_following = []
-		for following in self._following:
-			following = self.get_entity( following )
-			if following is None: continue
-			if isinstance( following, DynamicSharingTargetMixin ):
+		persons_following = set()
+		for following in self._get_entities_followed_for_read():
+			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
+				# TODO: Better interface
 				result += following._get_stream_cache_containers( containerId )
 			else:
-				persons_following.append( following )
+				persons_following.add( following )
 
 		for comm in self._get_dynamic_sharing_targets_for_read():
 			result.append( [x for x in comm.streamCache.getContainer( containerId, () )
@@ -899,20 +1011,17 @@ class SharingSourceMixin(SharingTargetMixin):
 		# TODO: This needs much optimization. And things like paging will
 		# be important.
 
-		persons_following = []
-		communities_seen = []
-		for following in self._following:
-			following = self.get_entity( following )
-			if following is None:
-				continue
-			if isinstance( following, DynamicSharingTargetMixin ):
-				communities_seen.append( following )
+		persons_following = set()
+		communities_seen = set()
+		for following in self._get_entities_followed_for_read():
+			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
+				communities_seen.add( following )
 				for x in following.getSharedContainer( containerId ):
 					if x is not None and not self.is_ignoring_shared_data_from( x.creator ):
 						result.append( x )
 						result.updateLastModIfGreater( x.lastModified )
 			else:
-				persons_following.append( following )
+				persons_following.add( following )
 
 
 		for comm in self._get_dynamic_sharing_targets_for_read():
