@@ -1038,6 +1038,25 @@ class SharingSourceMixin(SharingTargetMixin):
 			return super_result
 		return result
 
+import zope.intid.interfaces
+@component.adapter(nti_interfaces.IDynamicSharingTarget, zope.intid.interfaces.IIntIdRemovedEvent)
+def SharingSourceMixin_dynamicsharingtargetdeleted( target, event ):
+	"""
+	Look for things that people could have dynamic memberships recorded
+	with, and clear them when deleted.
+	"""
+	# Note: this is on the intid removal, not ObjectRemoved, because
+	# by ObjectRemoved time we can't get the intid to match weak refs with
+
+	# This really only matters for IFriendsLists
+	# (ICommunity is the only other IDynamicSharingTarget and they don't get deleted)
+	if nti_interfaces.IFriendsList.providedBy( target ):
+		for entity in target:
+			record_no_longer_dynamic_member = getattr( entity, 'record_no_longer_dynamic_member', None )
+			if callable(record_no_longer_dynamic_member):
+				record_no_longer_dynamic_member( target )
+				entity.stop_following( target )
+
 
 class DynamicSharingTargetMixin(SharingTargetMixin):
 	"""
