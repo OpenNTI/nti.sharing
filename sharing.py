@@ -509,6 +509,12 @@ class SharingTargetMixin(object):
 
 
 	def mute_conversation( self, root_ntiid_oid ):
+		"""
+		:raises TypeError: If `root_ntiid_oid` is ``None``.
+		"""
+		# self._muted_oids would raise TypeError, but no need to
+		# run the lazy creator if not needed
+		if root_ntiid_oid is None: raise TypeError('Object has default comparison') # match BTree message
 		self._muted_oids.add( root_ntiid_oid )
 
 		# Now move over anything that is muted
@@ -516,7 +522,9 @@ class SharingTargetMixin(object):
 
 
 	def unmute_conversation( self, root_ntiid_oid ):
-		if '_muted_oids' not in self.__dict__:
+		if '_muted_oids' not in self.__dict__ or root_ntiid_oid is None:
+			# No need to let self._muted_oids raise TypeError if root_ntiid_oid is
+			# None: It could never possibly be muted
 			return
 
 		if sets.discard_p( self._muted_oids, root_ntiid_oid ):
@@ -531,14 +539,16 @@ class SharingTargetMixin(object):
 		if getattr( the_object, 'id', self ) in self._muted_oids:
 			return True
 		ntiid = to_external_ntiid_oid( the_object )
-		if ntiid in self._muted_oids:
+		#__traceback_info__ = the_object, ntiid
+		if ntiid in self._muted_oids: # Raises TypeError if ntiid is None; which shouldn't happen
 			return True
 		reply_ntiid = to_external_ntiid_oid( the_object.inReplyTo ) if hasattr( the_object, 'inReplyTo' ) else None
-		if reply_ntiid in self._muted_oids:
+		#__traceback_info__ += getattr( the_object, 'inReplyTo' ), reply_ntiid
+		if reply_ntiid is not None and reply_ntiid in self._muted_oids: # Raises TypeError if reply_ntiid is None; this could happen
 			return True
 		refs_ntiids = [to_external_ntiid_oid(x) for x in the_object.references] if hasattr( the_object, 'references') else ()
 		for x in refs_ntiids:
-			if x in self._muted_oids:
+			if x and x in self._muted_oids:
 				return True
 
 		return False
