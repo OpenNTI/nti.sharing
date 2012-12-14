@@ -936,7 +936,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_followed', source )
 
 	@property
-	#@deprecate("Prefer `entities_followed`")
+	@deprecate("Prefer `entities_followed`")
 	def following(self):
 		""" :returns: Iterable names of entities we are following. """
 		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_entities_followed' )
