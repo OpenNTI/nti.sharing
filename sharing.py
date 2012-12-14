@@ -341,18 +341,36 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
 
 def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
-	if name not in self.__dict__:
-		return ()
-	return {wref().username for wref in getattr(self,name) if wref() is not None}
+	container = ()
+	if name in self.__dict__:
+		container = getattr( self, name )
+	result = set()
+	for wref in container:
+		val = wref()
+		if val is not None:
+			result.add( val.username )
+
+	return result
 
 def _iterable_of_entities_from_named_lazy_set_of_wrefs(self, name):
-	if name not in self.__dict__:
-		return ()
-	return (wref() for wref in getattr(self,name) if wref() is not None)
+	container = ()
+	if name in self.__dict__:
+		container = getattr( self, name )
+	for wref in container:
+		val = wref()
+		if val is not None:
+			yield val
 
 def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
 	if name in self.__dict__:
-		sets.discard( getattr( self, name ), nti_interfaces.IWeakRef( entity ) )
+		jar = getattr( self, '_p_jar', None )
+		container = getattr( self, name )
+		if jar is not None:
+			# Since we're mutating, probably based on some other object's
+			# content, make sure we're mutating the current version
+			jar.readCurrent( self )
+			jar.readCurrent( container )
+		sets.discard( container, nti_interfaces.IWeakRef( entity ) )
 
 class SharingTargetMixin(object):
 	"""
@@ -953,9 +971,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
 		"""
 		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
-		if '_dynamic_memberships' in self.__dict__:
-			sets.discard( self._dynamic_memberships, nti_interfaces.IWeakRef( dynamic_sharing_target ) )
-
+		_remove_entity_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships', dynamic_sharing_target )
 
 	@property
 	@deprecate("Prefer `dynamic_memberships` or `usernames_of_dynamic_memberships`")
