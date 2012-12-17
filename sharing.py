@@ -342,6 +342,7 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 
 def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
 	container = ()
+	self._p_activate() # Ensure we have a dict
 	if name in self.__dict__:
 		container = getattr( self, name )
 	result = set()
@@ -354,6 +355,7 @@ def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
 
 def _iterable_of_entities_from_named_lazy_set_of_wrefs(self, name):
 	container = ()
+	self._p_activate() # Ensure we have a dict
 	if name in self.__dict__:
 		container = getattr( self, name )
 	for wref in container:
@@ -362,6 +364,7 @@ def _iterable_of_entities_from_named_lazy_set_of_wrefs(self, name):
 			yield val
 
 def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
+	self._p_activate() # Ensure we have a dict
 	if name in self.__dict__:
 		jar = getattr( self, '_p_jar', None )
 		container = getattr( self, name )
