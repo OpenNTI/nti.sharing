@@ -710,6 +710,8 @@ class SharingTargetMixin(object):
 	# for things I haven't yet accepted but are still shared with me.
 	def getSharedContainer( self, containerId, defaultValue=() ):
 		"""
+		Get the shared container.
+
 		:return: If the containerId is found, an iterable of callable objects (weak refs);
 			calling the objects will either return the actual shared object, or None.
 		"""
