@@ -25,6 +25,7 @@ import persistent
 import BTrees
 from BTrees.OOBTree import OOTreeSet
 from ZODB import loglevels
+from ZODB.POSException import POSKeyError
 
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import datastructures
@@ -1046,9 +1047,13 @@ class SharingSourceMixin(SharingTargetMixin):
 			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
 				communities_seen.add( following )
 				for x in following.getSharedContainer( containerId ):
-					if x is not None and not self.is_ignoring_shared_data_from( x.creator ):
-						result.append( x )
-						result.updateLastModIfGreater( x.lastModified )
+					try:
+						if x is not None and not self.is_ignoring_shared_data_from( x.creator ):
+							result.append( x )
+							result.updateLastModIfGreater( x.lastModified )
+					except POSKeyError: # pragma: no cover
+						# an object gone missing. This is bad. NOTE: it may be something nested in x
+						logger.warning( "Shared object (%s) missing in '%s' from '%s' to '%s'", type(x), containerId,  following, self )
 			else:
 				persons_following.add( following )
 
@@ -1057,9 +1062,13 @@ class SharingSourceMixin(SharingTargetMixin):
 			if comm in communities_seen:
 				continue
 			for x in comm.getSharedContainer( containerId ):
-				if x and x.creator in persons_following:
-					result.append( x )
-					result.updateLastModIfGreater( x.lastModified )
+				try:
+					if x and x.creator in persons_following:
+						result.append( x )
+						result.updateLastModIfGreater( x.lastModified )
+				except POSKeyError: # pragma: no cover
+					# an object gone missing. This is bad. NOTE: it may be something nested in x
+					logger.warning( "Shared object (%s) missing in '%s' dynamically shared from '%s' to '%s'", type(x), containerId, comm, self )
 
 		# If we made no modifications, return the default
 		# (which would have already been returned by super; possibly it returned other data)
