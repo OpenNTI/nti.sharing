@@ -7,34 +7,35 @@ $Id$
 """
 from __future__ import print_function, unicode_literals
 
-
 logger = __import__('logging').getLogger( __name__ )
 
-import collections
-import heapq
 import six
+import heapq
+import collections
 
 from zope import component
+from zope import interface
+from zope.location import locate
 from zope.deprecation import deprecate
-from zope.cachedescriptors.property import Lazy
 from zope.container.contained import Contained
+from zope.cachedescriptors.property import Lazy
+from zope.location import interfaces as loc_interfaces
 
 from zc import intid as zc_intid
 
-import persistent
 import BTrees
-from BTrees.OOBTree import OOTreeSet
+import persistent
 from ZODB import loglevels
+from BTrees.OOBTree import OOTreeSet
 from ZODB.POSException import POSKeyError
 
-from nti.dataserver.activitystream_change import Change
 from nti.dataserver import datastructures
+from nti.dataserver.activitystream_change import Change
 from nti.dataserver import interfaces as nti_interfaces
 
 from nti.externalization.oids import to_external_ntiid_oid
 
 from nti.utils import sets
-from nti.utils.property import alias
 
 # TODO: This all needs refactored. The different pieces need to be broken into
 # different interfaces and adapters, probably using annotations, to get most
@@ -43,6 +44,7 @@ from nti.utils.property import alias
 def _getObject( intids, intid ):
 	return intids.getObject( intid )
 
+@interface.implementer( loc_interfaces.ILocation)
 class _SCOSContainerFacade(object):
 	"""
 	Public facade for a single container in
@@ -86,6 +88,7 @@ class _SCOSContainerFacade(object):
 	def __len__( self ):
 		return len(self._container_set)
 
+@interface.implementer( loc_interfaces.ILocation)
 class _SCOSContainersFacade(object):
 	"""
 	Transient object to implement the `values` support
@@ -433,8 +436,7 @@ class SharingTargetMixin(object):
 		self._p_changed = True
 		if self._p_jar:
 			self._p_jar.add( cache )
-		cache.__parent__ = self
-		cache.__name__ = 'streamCache'
+		locate(cache, self, 'streamCache')
 		return cache
 
 	@Lazy
@@ -451,8 +453,7 @@ class SharingTargetMixin(object):
 		result = _SharedContainedObjectStorage()
 		if self._p_jar:
 			self._p_jar.add( result )
-		result.__parent__ = self
-		result.__name__ = 'containersOfShared'
+		locate(result, self, 'containersOfShared')
 		return result
 
 	@Lazy
@@ -465,10 +466,7 @@ class SharingTargetMixin(object):
 		result = _SharedContainedObjectStorage()
 		if self._p_jar:
 			self._p_jar.add( result )
-
-		result.__parent__ = self
-		result.__name__ = 'containers_of_muted'
-
+		locate(result, self, 'containers_of_muted')
 		return result
 
 	def _lazy_create_ootreeset_for_wref(self):
@@ -1132,8 +1130,6 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 
 	def __init__( self ):
 		super(ShareableMixin,self).__init__()
-
-
 
 	def clearSharingTargets( self ):
 		if self._sharingTargets is not None:
