@@ -10,7 +10,7 @@ from hamcrest import has_length
 from hamcrest import is_not, is_
 does_not = is_not
 from hamcrest import has_item
-from nti.dataserver.tests.mock_dataserver import ConfiguringTestBase
+from nti.dataserver.tests.mock_dataserver import SharedConfiguringTestBase
 
 import fudge
 
@@ -29,7 +29,7 @@ class Change(persistent.Persistent):
 	def __repr__( self ):
 		return "<Change %s %s>" % (self.id, self.lastModified)
 
-class TestStreamSharedCache(ConfiguringTestBase):
+class TestStreamSharedCache(SharedConfiguringTestBase):
 
 	@fudge.patch( 'nti.dataserver.sharing._getId' )
 	def test_size_caps(self, fake_getId):
