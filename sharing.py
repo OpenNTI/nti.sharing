@@ -17,6 +17,7 @@ from zope import component
 from zope import interface
 from zope.location import locate
 from zope.deprecation import deprecate
+from zope.deprecation import deprecated
 from zope.container.contained import Contained
 from zope.cachedescriptors.property import Lazy
 from zope.location import interfaces as loc_interfaces
@@ -45,7 +46,7 @@ def _getObject( intids, intid ):
 	return intids.getObject( intid )
 
 @interface.implementer( loc_interfaces.ILocation)
-class _SCOSContainerFacade(object):
+class _IntidResolvingIterable(object):
 	"""
 	Public facade for a single container in
 	shared contained object storage. Exists to hide the details
@@ -87,6 +88,11 @@ class _SCOSContainerFacade(object):
 
 	def __len__( self ):
 		return len(self._container_set)
+
+	def __reduce__( self ):
+		raise TypeError( "Transient object; should not be pickled" )
+
+_SCOSContainerFacade = _IntidResolvingIterable
 
 @interface.implementer( loc_interfaces.ILocation)
 class _SCOSContainersFacade(object):
@@ -1241,6 +1247,12 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 				if username == wants.username:
 					return True
 
+	def isSharedWith( self, wants ):
+		"""
+		Checks if we are directly or indirectly shared with `wants` (a principal)
+		"""
+		return self.isSharedDirectlyWith( wants ) or self.isSharedIndirectlyWith( wants )
+
 	def getFlattenedSharingTargetNames(self):
 		"""
 		Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
@@ -1248,23 +1260,34 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		"""
 		if self._sharingTargets is None:
 			return set()
-		return set( (x.username for x in self.sharingTargets) )
+
+		result = set()
+		for x in self.sharingTargets:
+			result.add( x.username ) # always this one
+			# then expand if needed
+			iterable = nti_interfaces.IUsernameIterable( x, None )
+			if iterable is not None:
+				result.update( iterable )
+
+		return result
 
 	# It would be nice to use CachedProperty here, but it doesn't quite play right with
 	# object-values for dependent keys
-	flattenedSharingTargetNames = property(getFlattenedSharingTargetNames) #CachedProperty( getFlattenedSharingTargetNames, '_sharingTargets' )
+	flattenedSharingTargetNames = deprecated(
+		property(getFlattenedSharingTargetNames), #CachedProperty( getFlattenedSharingTargetNames, '_sharingTargets' )
+		"Prefer `sharingTargets`. The names are not globally unique when shared with DynamicSharingTargets")
 	getFlattenedSharingTargetNames = deprecate("Prefer 'flattenedSharingTargetNames' attribute")(getFlattenedSharingTargetNames)
 
 
 	@property
 	def sharingTargets(self):
 		"""
-		Returns a flattened :class:`set` of entities with whom this item
+		Returns a simple :class:`set` of entities with whom this item
 		is shared.
 		"""
 		if self._sharingTargets is None:
 			return set()
 		# Provide a bit of defense against the intids going away or changing
 		# out from under us
-		return set( (x for x in _SCOSContainerFacade( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' )
+		return set( (x for x in _IntidResolvingIterable( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' )
 					if x is not None and hasattr( x, 'username') ) )
