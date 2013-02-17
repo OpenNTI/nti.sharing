@@ -1199,6 +1199,37 @@ class AbstractReadableSharedMixin(object):
 	# object-values for dependent keys
 	flattenedSharingTargetNames = property(getFlattenedSharingTargetNames)
 
+from nti.externalization.externalization import to_external_object
+class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
+	"""
+	Extends :class:`AbstractReadableSharedMixin` to provide the :meth:`sharedWith` property.
+	"""
+
+	@property
+	def sharedWith(self):
+		"""
+		Return the string usernames of things we're sharing with. Note that instead of
+		just using the 'username' attribute directly ourself, we are externalizing
+		the whole object and returning the externalized value of the username.
+		This lets us be consistent with any cases where we are playing games
+		with the external value of the username, such as with DynamicFriendsLists.
+		"""
+		ext_shared_with = []
+		for entity in self.sharingTargets:
+			# NOTE: This entire process does way too much work for as often as this
+			# is called so we hack this and couple it tightly to when we think
+			# we need to use it. See nti.appserver._adapters
+			#ext_shared_with.append( toExternalObject( entity )['Username'] )
+			if nti_interfaces.IDynamicSharingTargetFriendsList.providedBy( entity ):
+				username = entity.NTIID
+			elif nti_interfaces.IUser.providedBy( entity ) or nti_interfaces.ICommunity.providedBy( entity ):
+				username = entity.username
+			else:
+				# Hmm, what do we have here?
+				username = to_external_object( entity )['Username']
+
+			ext_shared_with.append( username )
+		return ext_shared_with
 
 def _ii_family():
 	intids = component.queryUtility( zc_intid.IIntIds )
@@ -1207,7 +1238,7 @@ def _ii_family():
 	return BTrees.family64
 
 @interface.implementer(nti_interfaces.IWritableShared)
-class ShareableMixin(AbstractReadableSharedMixin, datastructures.CreatedModDateTrackingObject):
+class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModDateTrackingObject):
 	""" Represents something that can be shared. It has a set of SharingTargets
 	with which it is shared (permissions) and some flags. Only its creator
 	can alter its sharing targets. It may be possible to copy this object. """
