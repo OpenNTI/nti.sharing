@@ -1118,13 +1118,96 @@ class DynamicSharingTargetMixin(SharingTargetMixin):
 	def __init__(self, *args, **kwargs):
 		super(DynamicSharingTargetMixin,self).__init__( *args, **kwargs )
 
+class AbstractReadableSharedMixin(object):
+	"""
+	A mixin for implementing :class:`.IReadableShared`. This class defines everything
+	in terms of the ``sharingTargets`` property; subclasses simply need to provide
+	an implementation for that property. (For optional efficiency, subclasses can override
+	:meth:`_may_have_sharing_targets`)
+
+	"""
+
+	def __init__( self ):
+		super(AbstractReadableSharedMixin,self).__init__()
+
+	def _may_have_sharing_targets( self ):
+		"""
+		Called in the implementation of the public query methods to aid efficiency. If this
+		returns false, then some algorithms may be short-circuited.
+		"""
+
+		return True # always assume the worst
+
+	def isSharedDirectlyWith( self, wants ):
+		"""
+		Checks if we are directly shared with `wants`, which must be a
+		Principal.
+		"""
+		if not self._may_have_sharing_targets( ):
+			return False
+
+		try:
+			return wants in self.sharingTargets
+		except KeyError:
+			pass
+
+	def isSharedIndirectlyWith( self, wants ):
+		"""
+		Checks if we are indirectly shared with `wants` (a Principal).
+		"""
+
+		if not self._may_have_sharing_targets():
+			return False
+
+		for target in self.sharingTargets:
+			for entity in nti_interfaces.IEntityIterable( target, () ):
+				if entity == wants:
+					return True
+
+	def isSharedWith( self, wants ):
+		"""
+		Checks if we are directly or indirectly shared with `wants` (a principal)
+		"""
+		return self.isSharedDirectlyWith( wants ) or self.isSharedIndirectlyWith( wants )
+
+	@property
+	def flattenedSharingTargets( self ):
+		"""
+		A flattened :class:`set` of entities with whom this item is shared.
+		"""
+		if not self._may_have_sharing_targets():
+			return set()
+
+		result = set()
+		for x in self.sharingTargets:
+			result.add( x ) # always this one
+			# then expand if needed
+			iterable = nti_interfaces.IEntityIterable( x, None )
+			if iterable is not None:
+				result.update( iterable )
+
+		return result
+
+	def getFlattenedSharingTargetNames(self):
+		"""
+		Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
+		is shared.
+		"""
+		return {x.username for x in self.flattenedSharingTargets}
+
+	# It would be nice to use CachedProperty here, but it doesn't quite play right with
+	# object-values for dependent keys
+	flattenedSharingTargetNames = property(getFlattenedSharingTargetNames)
+
+
 def _ii_family():
 	intids = component.queryUtility( zc_intid.IIntIds )
 	if intids:
 		return intids.family
 	return BTrees.family64
 
-class ShareableMixin(datastructures.CreatedModDateTrackingObject):
+@interface.implementer(nti_interfaces.IWritableShared)
+class ShareableMixin(AbstractReadableSharedMixin, datastructures.CreatedModDateTrackingObject):
 	""" Represents something that can be shared. It has a set of SharingTargets
 	with which it is shared (permissions) and some flags. Only its creator
 	can alter its sharing targets. It may be possible to copy this object. """
@@ -1137,13 +1220,16 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 	def __init__( self ):
 		super(ShareableMixin,self).__init__()
 
+	def _may_have_sharing_targets(self):
+		return bool(self._sharingTargets)
+
 	def clearSharingTargets( self ):
 		if self._sharingTargets is not None:
 			self._sharingTargets.clear() # Preserve existing object
 
 			self.updateLastMod()
 
-	def addSharingTarget( self, target, actor=None ):
+	def addSharingTarget( self, target ):
 		"""
 		Adds a sharing target. We accept either SharingTarget
 		subclasses, or iterables of them.
@@ -1158,7 +1244,7 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 			# TODO: interfaces
 			# expand iterables now
 			for t in target:
-				self.addSharingTarget( t, actor=actor )
+				self.addSharingTarget( t )
 			return
 
 		# Don't allow sharing with ourself, it's weird
@@ -1178,7 +1264,7 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		Cause this object to be shared with only the `replacement_targets` and
 		no one else.
 
-		:param replacement_targets: A collection of users.
+		:param replacement_targets: A collection of entities to share with.
 		"""
 
 		replacement_userids = _ii_family().II.TreeSet()
@@ -1226,58 +1312,14 @@ class ShareableMixin(datastructures.CreatedModDateTrackingObject):
 		Checks if we are directly shared with `wants`, which must be a
 		Principal.
 		"""
-		if not self._sharingTargets:
+		if not self._may_have_sharing_targets():
 			return False
 
+		# We can be slightly more efficient than the superclass
 		try:
 			return _getId( wants ) in self._sharingTargets
 		except KeyError:
 			pass
-
-	def isSharedIndirectlyWith( self, wants ):
-		"""
-		Checks if we are indirectly shared with `wants` (a Principal).
-		"""
-
-		if not self._sharingTargets:
-			return False
-
-		for target in self.sharingTargets:
-			for username in nti_interfaces.IUsernameIterable( target, () ):
-				if username == wants.username:
-					return True
-
-	def isSharedWith( self, wants ):
-		"""
-		Checks if we are directly or indirectly shared with `wants` (a principal)
-		"""
-		return self.isSharedDirectlyWith( wants ) or self.isSharedIndirectlyWith( wants )
-
-	def getFlattenedSharingTargetNames(self):
-		"""
-		Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
-		is shared.
-		"""
-		if self._sharingTargets is None:
-			return set()
-
-		result = set()
-		for x in self.sharingTargets:
-			result.add( x.username ) # always this one
-			# then expand if needed
-			iterable = nti_interfaces.IUsernameIterable( x, None )
-			if iterable is not None:
-				result.update( iterable )
-
-		return result
-
-	# It would be nice to use CachedProperty here, but it doesn't quite play right with
-	# object-values for dependent keys
-	flattenedSharingTargetNames = deprecated(
-		property(getFlattenedSharingTargetNames), #CachedProperty( getFlattenedSharingTargetNames, '_sharingTargets' )
-		"Prefer `sharingTargets`. The names are not globally unique when shared with DynamicSharingTargets")
-	getFlattenedSharingTargetNames = deprecate("Prefer 'flattenedSharingTargetNames' attribute")(getFlattenedSharingTargetNames)
-
 
 	@property
 	def sharingTargets(self):
