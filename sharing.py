@@ -1229,7 +1229,7 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 				username = to_external_object( entity )['Username']
 
 			ext_shared_with.append( username )
-		return ext_shared_with
+		return set(ext_shared_with)
 
 def _ii_family():
 	intids = component.queryUtility( zc_intid.IIntIds )
