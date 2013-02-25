@@ -1136,7 +1136,7 @@ class AbstractReadableSharedMixin(object):
 		returns false, then some algorithms may be short-circuited.
 		"""
 
-		return True # always assume the worst
+		return  hasattr( self, 'sharingTargets' ) # always assume the worst, so long as the property exists
 
 	def isSharedDirectlyWith( self, wants ):
 		"""
