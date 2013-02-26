@@ -1231,6 +1231,33 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 			ext_shared_with.append( username )
 		return set(ext_shared_with)
 
+from nti.dataserver.authentication import _dynamic_memberships_that_participate_in_security
+from nti.dataserver.traversal import find_interface
+
+class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin):
+	"""
+	Base class that implements ``sharingTargets`` and ``sharedWith``
+	through the presence of the :class:`.IDefaultPublished` interface.
+	We say that all instances that are published are shared with all
+	the dynamic memberships of the creator or owner of the object (either
+	the creator attribute, or the first :class:`.IUser` in our lineage)
+
+	"""
+
+	def _may_have_sharing_targets( self ):
+		return nti_interfaces.IDefaultPublished.providedBy( self )
+
+	@property
+	def sharingTargets(self):
+		if nti_interfaces.IDefaultPublished.providedBy( self ):
+			creator = getattr( self, 'creator', None )
+			# interestingly, IUser does not extend IPrincipal
+			owner = creator if nti_interfaces.IUser.providedBy( creator ) else find_interface( self, nti_interfaces.IUser )
+			# TODO: Using a private function
+			# This returns a generator, the schema says we need a 'UniqueIterable'
+			return _dynamic_memberships_that_participate_in_security( owner, as_principals=False )
+		return ()
+
 def _ii_family():
 	intids = component.queryUtility( zc_intid.IIntIds )
 	if intids:
