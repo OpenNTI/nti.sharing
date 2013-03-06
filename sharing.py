@@ -17,12 +17,12 @@ from zope import component
 from zope import interface
 from zope.location import locate
 from zope.deprecation import deprecate
-from zope.deprecation import deprecated
 from zope.container.contained import Contained
 from zope.cachedescriptors.property import Lazy
 from zope.location import interfaces as loc_interfaces
 
 from zc import intid as zc_intid
+from nti.intid.containers import IntidResolvingIterable
 
 import BTrees
 import persistent
@@ -38,67 +38,17 @@ from nti.externalization.oids import to_external_ntiid_oid
 
 from nti.utils import sets
 
+
 # TODO: This all needs refactored. The different pieces need to be broken into
 # different interfaces and adapters, probably using annotations, to get most
 # of this out of the core object structure, and to make more things possible.
 
-def _getObject( intids, intid ):
-	return intids.getObject( intid )
 
-@interface.implementer( loc_interfaces.ILocation)
-class _IntidResolvingIterable(object):
-	"""
-	Public facade for a single container in
-	shared contained object storage. Exists to hide the details
-	of looking up an object from its intid number.
-	"""
-
-	__parent__ = None
-	__name__ = None
-
-	def __init__( self, iiset, allow_missing=False, parent=None, name=None ):
-		"""
-		:keyword bool allow_missing: If False (the default) then errors will be
-			raised for objects that are in the set but cannot be found by id. If
-			``True``, then they will be silently ignored.
-		"""
-		self._container_set = iiset
-		self._allow_missing = allow_missing
-		if parent:
-			self.__parent__ = parent
-		if name:
-			self.__name__ = name
-
-	def __iter__( self ):
-		intids = component.getUtility( zc_intid.IIntIds )
-		for iid in self._container_set:
-			__traceback_info__ = iid, self.__parent__, self.__name__
-			try:
-				yield intids.getObject( iid )
-			except TypeError:
-				# Raised when we send a string or something, which means we do not actually
-				# have an IISet. This is a sign of an object missed during migration
-				if not self._allow_missing:
-					raise
-				logger.log( loglevels.TRACE, "Incorrect key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
-			except KeyError:
-				if not self._allow_missing:
-					raise
-				logger.log( loglevels.TRACE, "Failed to resolve key '%s' in %r of %r", iid, self.__name__, self.__parent__ )
-
-	def __len__( self ):
-		return len(self._container_set)
-
-	def __reduce__( self ):
-		raise TypeError( "Transient object; should not be pickled" )
-
-_SCOSContainerFacade = _IntidResolvingIterable
-
-@interface.implementer( loc_interfaces.ILocation)
+@interface.implementer(loc_interfaces.ILocation)
 class _SCOSContainersFacade(object):
 	"""
 	Transient object to implement the `values` support
-	by returning each actual value wrapped in a :class:`_SCOSContainerFacade`
+	by returning each actual value wrapped in a :class:`IntidResolvingIterable`
 	"""
 
 	__parent__ = None
@@ -113,11 +63,14 @@ class _SCOSContainersFacade(object):
 			self.__name__ = name
 
 	def values(self):
-		return (_SCOSContainerFacade( v, allow_missing=self._allow_missing, parent=self, name=k )
+		return (IntidResolvingIterable( v, allow_missing=self._allow_missing, parent=self, name=k )
 				for k, v in self._containers.items())
 
 	def __repr__( self ):
 		return '<%s %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__)
+
+	def __reduce__( self ):
+		raise TypeError( "Transient object; should not be pickled" )
 
 _marker = object()
 def _getId( contained, when_none=_marker ):
@@ -145,6 +98,7 @@ class _SharedContainedObjectStorage(persistent.Persistent,Contained):
 				self.family = intids.family
 
 		# Map from string container ids to self.family.II.TreeSet
+		# { 'containerId': II.TreeSet() }
 		# The values in the TreeSet are the intids of the shared
 		# objects
 		self._containers = self.family.OO.BTree()
@@ -182,7 +136,7 @@ class _SharedContainedObjectStorage(persistent.Persistent,Contained):
 
 	def getContainer( self, containerId, defaultValue=None ):
 		container_set = self._containers.get( containerId )
-		return _SCOSContainerFacade( container_set, allow_missing=True ) if container_set is not None else defaultValue
+		return IntidResolvingIterable( container_set, allow_missing=True ) if container_set is not None else defaultValue
 
 	def __repr__( self ):
 		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
@@ -1389,5 +1343,5 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 			return set()
 		# Provide a bit of defense against the intids going away or changing
 		# out from under us
-		return set( (x for x in _IntidResolvingIterable( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' )
+		return set( (x for x in IntidResolvingIterable( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' )
 					if x is not None and hasattr( x, 'username') ) )
