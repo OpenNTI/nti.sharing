@@ -614,8 +614,12 @@ class SharingTargetMixin(object):
 		# Remove from both muted and normal, just in case
 		result = False
 		for containers in (self.containersOfShared,self.containers_of_muted):
-			# Drop the logging to TRACE because at least one of these will be missing
-			result = containers.deleteEqualContainedObject( contained, log_level=loglevels.TRACE ) or result
+			# Drop the logging to TRACE because at least one of these will be missing.
+			# We may get a ContainedObjectValueError if the object was not even sharable to begin with
+			try:
+				result = containers.deleteEqualContainedObject( contained, log_level=loglevels.TRACE ) or result
+			except ValueError:
+				pass
 		return result
 
 	def _addToStream( self, change ):
@@ -733,10 +737,9 @@ class SharingTargetMixin(object):
 		"""
 		accepted = self._addToStream( change )
 
-		if direct:
+		if direct and change.is_object_shareable():
 			# TODO: What's the right check here?
-			if not hasattr( change.object, 'username' ):
-				self._addSharedObject( change.object )
+			self._addSharedObject( change.object )
 		return accepted
 
 	def _noticeChange( self, change, force=False ):
@@ -774,7 +777,7 @@ class SharingTargetMixin(object):
 			# For speedy deletion at the expense of scale, we
 			# can force the matter
 			removed = self._removeSharedObject( change.object )
-			if removed is False or removed is None: # Explicit, not falsey
+			if removed is False or removed is None and change.is_object_shareable(): # Explicit, not falsey
 				logger.warn( "Incoming deletion (%s) didn't find a shared object in %s", change, self )
 			# Hmm. We also feel like we want to remove the entire thing from the stream
 			# as well, erasing all evidence that it ever
@@ -1132,13 +1135,18 @@ class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin)
 	@property
 	def sharingTargets(self):
 		if nti_interfaces.IDefaultPublished.providedBy( self ):
-			creator = getattr( self, 'creator', None )
-			# interestingly, IUser does not extend IPrincipal
-			owner = creator if nti_interfaces.IUser.providedBy( creator ) else find_interface( self, nti_interfaces.IUser )
-			# TODO: Using a private function
-			# This returns a generator, the schema says we need a 'UniqueIterable'
-			return _dynamic_memberships_that_participate_in_security( owner, as_principals=False )
+			return self.sharingTargetsWhenPublished
 		return ()
+
+	@property
+	def sharingTargetsWhenPublished(self):
+		creator = getattr( self, 'creator', None )
+		# interestingly, IUser does not extend IPrincipal
+		owner = creator if nti_interfaces.IUser.providedBy( creator ) else find_interface( self, nti_interfaces.IUser )
+		# TODO: Using a private function
+		# This returns a generator, the schema says we need a 'UniqueIterable'
+		return _dynamic_memberships_that_participate_in_security( owner, as_principals=False )
+
 
 def _ii_family():
 	intids = component.queryUtility( zc_intid.IIntIds )
