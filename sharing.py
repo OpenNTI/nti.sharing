@@ -457,7 +457,7 @@ class SharingTargetMixin(object):
 		for x in refs_ntiids:
 			if x and x in self._muted_oids:
 				return True
-
+		# TODO: Might also want to check the containerId to facilitate muting from forums/blogs?
 		return False
 
 	def accept_shared_data_from( self, source ):
@@ -739,16 +739,17 @@ class SharingTargetMixin(object):
 				self._addSharedObject( change.object )
 		return accepted
 
-	def _noticeChange( self, change ):
+	def _noticeChange( self, change, force=False ):
 		""" Should run in a transaction. """
 		# We hope to only get changes for objects shared with us, but
-		# we double check to be sure--DELETES must always go through.
+		# we double check to be sure--force causes us to take incoming
+		# creations/shares anyway. DELETES must always go through, regardless
 
 		if change.type in (Change.CREATED,Change.SHARED):
 			if change.object is not None and self.is_accepting_shared_data_from( change.creator ):
 				if change.object.isSharedDirectlyWith( self ):
 					self._acceptIncomingChange( change )
-				elif change.object.isSharedIndirectlyWith( self ):
+				elif change.object.isSharedIndirectlyWith( self ) or force:
 					self._acceptIncomingChange( change, direct=False )
 		elif change.type == Change.MODIFIED:
 			if change.object is not None:
@@ -763,7 +764,7 @@ class SharingTargetMixin(object):
 					# order matters
 					self._addToStream( change )
 					self._addSharedObject( change.object )
-				elif change.object.isSharedIndirectlyWith( self ):
+				elif change.object.isSharedIndirectlyWith( self ) or force:
 					self._addToStream( change )
 				else:
 					# FIXME: Badly linear
