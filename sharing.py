@@ -19,9 +19,9 @@ from zope.location import locate
 from zope.deprecation import deprecate
 from zope.container.contained import Contained
 from zope.cachedescriptors.property import Lazy
-from zope.location import interfaces as loc_interfaces
 
 from zc import intid as zc_intid
+from nti.intid.containers import IntidResolvingMappingFacade
 from nti.intid.containers import IntidResolvingIterable
 
 import BTrees
@@ -37,40 +37,13 @@ from nti.dataserver import interfaces as nti_interfaces
 from nti.externalization.oids import to_external_ntiid_oid
 
 from nti.utils import sets
+from nti.utils.property import CachedProperty
 
 
 # TODO: This all needs refactored. The different pieces need to be broken into
 # different interfaces and adapters, probably using annotations, to get most
 # of this out of the core object structure, and to make more things possible.
 
-
-@interface.implementer(loc_interfaces.ILocation)
-class _SCOSContainersFacade(object):
-	"""
-	Transient object to implement the `values` support
-	by returning each actual value wrapped in a :class:`IntidResolvingIterable`
-	"""
-
-	__parent__ = None
-	__name__ = None
-
-	def __init__( self, _containers, allow_missing=False, parent=None, name=None ):
-		self._containers = _containers
-		self._allow_missing = allow_missing
-		if parent:
-			self.__parent__ = parent
-		if name:
-			self.__name__ = name
-
-	def values(self):
-		return (IntidResolvingIterable( v, allow_missing=self._allow_missing, parent=self, name=k )
-				for k, v in self._containers.items())
-
-	def __repr__( self ):
-		return '<%s %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__)
-
-	def __reduce__( self ):
-		raise TypeError( "Transient object; should not be pickled" )
 
 _marker = object()
 def _getId( contained, when_none=_marker ):
@@ -106,13 +79,13 @@ class _SharedContainedObjectStorage(persistent.Persistent,Contained):
 	def __iter__( self ):
 		return iter(self._containers)
 
-	@property
+	@CachedProperty # TODO: Is this right? Are we sure that the volatile properties added will go away when ghosted?
 	def containers(self):
 		"""
 		Returns an object that has a `values` method that iterates
-		the dict-like (immutable) containers.
+		the list-like (immutable) containers.
 		"""
-		return _SCOSContainersFacade( self._containers, allow_missing=True, parent=self, name='SharedContainedObjectStorage' )
+		return IntidResolvingMappingFacade( self._containers, allow_missing=True, parent=self, name='SharedContainedObjectStorage' )
 
 	def _check_contained_object_for_storage( self, contained ):
 		datastructures.check_contained_object_for_storage( contained )
@@ -135,8 +108,7 @@ class _SharedContainedObjectStorage(persistent.Persistent,Contained):
 				return contained
 
 	def getContainer( self, containerId, defaultValue=None ):
-		container_set = self._containers.get( containerId )
-		return IntidResolvingIterable( container_set, allow_missing=True ) if container_set is not None else defaultValue
+		return self.containers.get( containerId, default=defaultValue )
 
 	def __repr__( self ):
 		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
@@ -292,7 +264,9 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		return container_map.values() if container_map else defaultValue
 
 	def values( self ):
-		for k in self._containers: # Iter the keys and call getContainer to get wrapping1
+		# Iter the keys and call getContainer to get wrapping
+		for k in self._containers:
+			# FIXME: What? There's no wrapping anymore
 			yield self.getContainer( k )
 
 	def keys( self ):
