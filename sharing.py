@@ -21,8 +21,8 @@ from zope.container.contained import Contained
 from zope.cachedescriptors.property import Lazy
 
 from zc import intid as zc_intid
-from nti.intid.containers import IntidResolvingMappingFacade
 from nti.intid.containers import IntidResolvingIterable
+from nti.intid.containers import IntidContainedStorage
 
 import BTrees
 import persistent
@@ -37,7 +37,7 @@ from nti.dataserver import interfaces as nti_interfaces
 from nti.externalization.oids import to_external_ntiid_oid
 
 from nti.utils import sets
-from nti.utils.property import CachedProperty
+
 
 
 # TODO: This all needs refactored. The different pieces need to be broken into
@@ -52,66 +52,19 @@ def _getId( contained, when_none=_marker ):
 
 	return component.getUtility( zc_intid.IIntIds ).getId( contained )
 
-class _SharedContainedObjectStorage(persistent.Persistent,Contained):
+class _SharedContainedObjectStorage(IntidContainedStorage):
 	"""
 	An object that implements something like the interface of :class:`datastructures.ContainedStorage`,
 	but in a simpler form using only intids, and assuming that we never
 	need to look objects up by container/localID pairs.
 	"""
 
-	family = BTrees.family64
-
-	def __init__( self, family=None ):
-		super(_SharedContainedObjectStorage,self).__init__()
-		if family is not None:
-			self.family = family
-		else:
-			intids = component.queryUtility( zc_intid.IIntIds )
-			if intids:
-				self.family = intids.family
-
-		# Map from string container ids to self.family.II.TreeSet
-		# { 'containerId': II.TreeSet() }
-		# The values in the TreeSet are the intids of the shared
-		# objects
-		self._containers = self.family.OO.BTree()
-
-	def __iter__( self ):
-		return iter(self._containers)
-
-	@CachedProperty # TODO: Is this right? Are we sure that the volatile properties added will go away when ghosted?
-	def containers(self):
-		"""
-		Returns an object that has a `values` method that iterates
-		the list-like (immutable) containers.
-		"""
-		return IntidResolvingMappingFacade( self._containers, allow_missing=True, parent=self, name='SharedContainedObjectStorage' )
+	# This class exists for backwards compatibilty in pickles, and
+	# to override the contained object check
 
 	def _check_contained_object_for_storage( self, contained ):
 		datastructures.check_contained_object_for_storage( contained )
 
-	def addContainedObject( self, contained ):
-		self._check_contained_object_for_storage( contained )
-
-		container_set = self._containers.get( contained.containerId )
-		if container_set is None:
-			container_set = self.family.II.TreeSet()
-			self._containers[contained.containerId] = container_set
-		container_set.add( _getId( contained ) )
-		return contained
-
-	def deleteEqualContainedObject( self, contained, log_level=None ):
-		self._check_contained_object_for_storage( contained )
-		container_set = self._containers.get( contained.containerId )
-		if container_set is not None:
-			if sets.discard_p( container_set, _getId( contained ) ):
-				return contained
-
-	def getContainer( self, containerId, defaultValue=None ):
-		return self.containers.get( containerId, default=defaultValue )
-
-	def __repr__( self ):
-		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
 
 
 import struct
