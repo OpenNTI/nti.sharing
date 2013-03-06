@@ -367,7 +367,7 @@ class SharingTargetMixin(object):
 	def _muted_oids(self):
 		"""
 		Maintains the strings of external NTIID OIDS whose conversations are
-		muted.
+		muted. (Can actually hold any type of NTIID.)
 		"""
 		return self._lazy_create_ootreeset_for_wref()
 
@@ -414,6 +414,10 @@ class SharingTargetMixin(object):
 			if mute:
 				self.streamCache.deleteEqualContainedObject( x )
 
+		# There is the possibility for things to be in the stream
+		# cache that were never in the shared objects (forums)
+		# However, we have to apply muting at read time anyway, so
+		# there's no point going through the containers now
 
 	def mute_conversation( self, root_ntiid_oid ):
 		"""
@@ -457,7 +461,15 @@ class SharingTargetMixin(object):
 		for x in refs_ntiids:
 			if x and x in self._muted_oids:
 				return True
-		# TODO: Might also want to check the containerId to facilitate muting from forums/blogs?
+
+		# Ok, still going. Walk up through the containerId of this object and its parents, if any,
+		# to see if one of them is muted.
+		parent = the_object
+		while parent is not None:
+			if getattr( parent, 'containerId', None ) in self._muted_oids:
+				return True
+			parent = getattr( parent, '__parent__', None )
+
 		return False
 
 	def accept_shared_data_from( self, source ):
@@ -651,7 +663,7 @@ class SharingTargetMixin(object):
 		# TODO: These data structures could and should be optimized for this.
 		result = datastructures.LastModifiedCopyingUserList()
 
-		containers = self._get_stream_cache_containers( containerId )
+		stream_containers = self._get_stream_cache_containers( containerId )
 
 		change_objects = set()
 		def add( item, lm=None ):
@@ -668,7 +680,7 @@ class SharingTargetMixin(object):
 						 if item and item.lastModified > minAge
 						 and not self.is_ignoring_shared_data_from( item.creator )
 						 and (extra_pred is None or extra_pred(item)))
-			# Now take the largest of those, sorted by modification
+			# Now take the "largest" (newest) of those, sorted by modification
 			# (We actually take more than the stream size, to try to ensure that we
 			# can fulfill the request)
 			container = heapq.nlargest( of_size, container, key=lambda i: i.lastModified )
@@ -676,7 +688,7 @@ class SharingTargetMixin(object):
 
 		# First, get the N largest of all the containers, and then
 		most_recent_in_containers = []
-		for container in containers:
+		for stream_container in stream_containers:
 			# If the container is potentially larger than the stream size,
 			# we want to take only its most recent items, and then only the ones that
 			# match our other criteria
@@ -685,7 +697,9 @@ class SharingTargetMixin(object):
 			# Now take the largest of those, sorted by modification
 			# (We actually take more than the stream size, to try to ensure that we
 			# can fulfill the request)
-			container = _make_largest_container( container, maxCount * 2 )
+			# We sadly have to again apply muting here so that things in the community
+			# caches get our muting filters applied to them
+			container = _make_largest_container( stream_container, maxCount * 2, lambda x: not self.is_muted(x.object) )
 
 			# In order to heapq.merge, these have to be smallest to largest
 			container.reverse()
