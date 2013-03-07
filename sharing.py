@@ -447,11 +447,11 @@ class SharingTargetMixin(object):
 		if the_object is None or '_muted_oids' not in self.__dict__:
 			return False
 
-		if getattr( the_object, 'id', self ) in self._muted_oids:
+		if (getattr( the_object, 'id', None ) or '') in self._muted_oids:
 			return True
 		ntiid = to_external_ntiid_oid( the_object )
 		#__traceback_info__ = the_object, ntiid
-		if ntiid in self._muted_oids: # Raises TypeError if ntiid is None; which shouldn't happen
+		if ntiid and ntiid in self._muted_oids: # Raises TypeError if ntiid is None
 			return True
 		reply_ntiid = to_external_ntiid_oid( the_object.inReplyTo ) if hasattr( the_object, 'inReplyTo' ) else None
 		#__traceback_info__ += getattr( the_object, 'inReplyTo' ), reply_ntiid
@@ -466,7 +466,7 @@ class SharingTargetMixin(object):
 		# to see if one of them is muted.
 		parent = the_object
 		while parent is not None:
-			if getattr( parent, 'containerId', None ) in self._muted_oids:
+			if (getattr( parent, 'containerId', None ) or '') in self._muted_oids: # be sure to avoid testing None as above
 				return True
 			parent = getattr( parent, '__parent__', None )
 

@@ -9,15 +9,17 @@ from hamcrest import assert_that
 from hamcrest import has_length
 from hamcrest import is_not, is_
 does_not = is_not
+from hamcrest import not_none
 from hamcrest import has_item
 from nti.dataserver.tests.mock_dataserver import SharedConfiguringTestBase
-
+from nti.tests import is_false
 import fudge
 
 import persistent
 
-from nti.dataserver.sharing import _SharedStreamCache as StreamCache
 
+from nti.dataserver.sharing import _SharedStreamCache as StreamCache
+from nti.dataserver.sharing import SharingTargetMixin
 
 class Change(persistent.Persistent):
 	id = None
@@ -81,3 +83,13 @@ class TestStreamSharedCache(SharedConfiguringTestBase):
 		for i in (c2, c32, c5):
 			assert_that( values(), has_item( i ) )
 			assert_that( keys(), has_item( i.id ) )
+
+
+	def test_muted_none_container_id( self ):
+		class SharingTarget(SharingTargetMixin,persistent.Persistent): pass
+		sharingtarget = SharingTarget()
+		assert_that( sharingtarget._muted_oids, is_( not_none() ) )
+		class ObjWithNoneContainerId(object):
+			containerId = None
+
+		assert_that( sharingtarget.is_muted( ObjWithNoneContainerId() ), is_false() )
