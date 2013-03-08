@@ -1059,9 +1059,9 @@ class AbstractReadableSharedMixin(object):
 			return False
 
 		for target in self.sharingTargets:
-			for entity in nti_interfaces.IEntityIterable( target, () ):
-				if entity == wants:
-					return True
+			if wants in nti_interfaces.IEntityContainer( target, () ):
+				return True
+
 
 	def isSharedWith( self, wants ):
 		"""
@@ -1081,9 +1081,8 @@ class AbstractReadableSharedMixin(object):
 		for x in self.sharingTargets:
 			result.add( x ) # always this one
 			# then expand if needed
-			iterable = nti_interfaces.IEntityIterable( x, None )
-			if iterable is not None:
-				result.update( iterable )
+			iterable = nti_interfaces.IEntityIterable( x, () )
+			result.update( iterable )
 
 		return result
 
