@@ -761,7 +761,6 @@ class SharingTargetMixin(object):
 		# We hope to only get changes for objects shared with us, but
 		# we double check to be sure--force causes us to take incoming
 		# creations/shares anyway. DELETES must always go through, regardless
-
 		if change.type in (Change.CREATED,Change.SHARED):
 			if change.object is not None and self.is_accepting_shared_data_from( change.creator ):
 				if change.object.isSharedDirectlyWith( self ):
