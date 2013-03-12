@@ -698,8 +698,10 @@ class SharingTargetMixin(object):
 			# (We actually take more than the stream size, to try to ensure that we
 			# can fulfill the request)
 			# We sadly have to again apply muting here so that things in the community
-			# caches get our muting filters applied to them
-			container = _make_largest_container( stream_container, maxCount * 2, lambda x: not self.is_muted(x.object) )
+			# caches get our muting filters applied to them; likewise, things that are just
+			# deleted placeholders don't need to show up in the stream, they are only
+			# relevant in the original context (mostly used for forum entries or moderated things)
+			container = _make_largest_container( stream_container, maxCount * 2, lambda x: not self.is_muted(x.object) and not nti_interfaces.IDeletedObjectPlaceholder.providedBy( x.object ) )
 
 			# In order to heapq.merge, these have to be smallest to largest
 			container.reverse()
