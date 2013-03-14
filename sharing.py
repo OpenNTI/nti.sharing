@@ -266,6 +266,29 @@ def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
 			jar.readCurrent( container )
 		sets.discard( container, nti_interfaces.IWeakRef( entity ) )
 
+class _SharingContextCache(object):
+	"""
+	Provisional API to enable some caching to happen
+	when looking through multiple containers/streams.
+	Outside of this module, this is an opaque object.
+	"""
+
+	def __init__( self ):
+		self._data = {}
+
+	def __call__( self, func ):
+		# makes many assumptions. Func must return an iterable that we
+		# transform into a set
+		key = func.__name__
+		if key in self._data:
+			return self._data[key]
+
+		result = list(func())
+		self._data[key] = result
+		return result
+
+SharingContextCache = _SharingContextCache
+
 class SharingTargetMixin(object):
 	"""
 	Something that is a holder of shared data. These objects
@@ -605,7 +628,7 @@ class SharingTargetMixin(object):
 	# TODO: In addition to the actual explicitly shared objects that I've
 	# accepted because I'm not ignoring, we need the "incoming" group
 	# for things I haven't yet accepted but are still shared with me.
-	def getSharedContainer( self, containerId, defaultValue=() ):
+	def getSharedContainer( self, containerId, defaultValue=(), context_cache=None ):
 		"""
 		Get the shared container.
 
@@ -649,11 +672,13 @@ class SharingTargetMixin(object):
 	def _removeFromStream( self, change ):
 		self.streamCache.deleteEqualContainedObject( change.object )
 
-	def _get_stream_cache_containers( self, containerId ):
+	def _get_stream_cache_containers( self, containerId, context_cache=None ):
 		""" Return a sequence of stream cache containers for the id. """
 		return (self.streamCache.getContainer( containerId, () ),)
 
-	def getContainedStream( self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE ):
+	def getContainedStream( self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE, context_cache=None ):
+		if context_cache is None:
+			context_cache = _SharingContextCache()
 		# The contained stream is an amalgamation of the traffic explicitly
 		# to us, plus the traffic of things we're following. We merge these together and return
 		# just the ones that fit the criteria.
@@ -663,7 +688,7 @@ class SharingTargetMixin(object):
 		# TODO: These data structures could and should be optimized for this.
 		result = datastructures.LastModifiedCopyingUserList()
 
-		stream_containers = self._get_stream_cache_containers( containerId )
+		stream_containers = self._get_stream_cache_containers( containerId, context_cache=context_cache )
 
 		change_objects = set()
 		def add( item, lm=None ):
@@ -725,7 +750,7 @@ class SharingTargetMixin(object):
 		# being careful to avoid duplicating things present in the stream
 		# TODO: We've lost change information for these items.
 		extras_needed = maxCount - len(result)
-		for item in _make_largest_container( self.getSharedContainer( containerId ), extras_needed, lambda x: not dup(x) ):
+		for item in _make_largest_container( self.getSharedContainer( containerId, context_cache=context_cache ), extras_needed, lambda x: not dup(x) ):
 			change = Change( Change.SHARED, item )
 			change.creator = item.creator or self
 
@@ -906,7 +931,9 @@ class SharingSourceMixin(SharingTargetMixin):
 	def _get_entities_followed_for_read( self ):
 		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_followed' )
 
-	def _get_stream_cache_containers( self, containerId ):
+	def _get_stream_cache_containers( self, containerId, context_cache=None ):
+		if context_cache is None:
+			context_cache = _SharingContextCache()
 		# start with ours. This ensures things targeted toward us
 		# have the highest chance of making it in the cap if we go in order.
 		result = [self.streamCache.getContainer( containerId, () )]
@@ -917,21 +944,24 @@ class SharingSourceMixin(SharingTargetMixin):
 		# we're a member of
 
 		persons_following = set()
-		for following in self._get_entities_followed_for_read():
+		for following in context_cache(self._get_entities_followed_for_read):
 			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
 				# TODO: Better interface
 				result += following._get_stream_cache_containers( containerId )
 			else:
 				persons_following.add( following )
 
-		for comm in self._get_dynamic_sharing_targets_for_read():
+		for comm in context_cache(self._get_dynamic_sharing_targets_for_read):
 			result.append( [x for x in comm.streamCache.getContainer( containerId, () )
 							if x is not None and x.creator in persons_following] )
 
 
 		return result
 
-	def getSharedContainer( self, containerId, defaultValue=() ):
+	def getSharedContainer( self, containerId, defaultValue=(), context_cache=None ):
+		if context_cache is None:
+			context_cache = _SharingContextCache()
+
 		# start with ours
 		result = datastructures.LastModifiedCopyingUserList()
 		super_result = super(SharingSourceMixin,self).getSharedContainer( containerId, defaultValue=defaultValue )
@@ -949,7 +979,7 @@ class SharingSourceMixin(SharingTargetMixin):
 
 		persons_following = set()
 		communities_seen = set()
-		for following in self._get_entities_followed_for_read():
+		for following in context_cache( self._get_entities_followed_for_read ):
 			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
 				communities_seen.add( following )
 				for x in following.getSharedContainer( containerId ):
@@ -964,7 +994,7 @@ class SharingSourceMixin(SharingTargetMixin):
 				persons_following.add( following )
 
 
-		for comm in self._get_dynamic_sharing_targets_for_read():
+		for comm in context_cache( self._get_dynamic_sharing_targets_for_read ):
 			if comm in communities_seen:
 				continue
 			for x in comm.getSharedContainer( containerId ):
