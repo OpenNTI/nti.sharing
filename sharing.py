@@ -15,6 +15,7 @@ import collections
 
 from zope import component
 from zope import interface
+from zope.event import notify as _znotify
 from zope.location import locate
 from zope.deprecation import deprecate
 from zope.container.contained import Contained
@@ -33,6 +34,7 @@ from ZODB.POSException import POSKeyError
 from nti.dataserver import datastructures
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import interfaces as nti_interfaces
+from nti.dataserver.interfaces import ObjectSharingModifiedEvent
 
 from nti.externalization.oids import to_external_ntiid_oid
 
@@ -1142,6 +1144,9 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 		the whole object and returning the externalized value of the username.
 		This lets us be consistent with any cases where we are playing games
 		with the external value of the username, such as with DynamicFriendsLists.
+
+		In general, for internal use, prefer the :attr:`flattenedSharingTargets`
+		or :attr:`sharingTargets` property.
 		"""
 		ext_shared_with = []
 		for entity in self.sharingTargets:
@@ -1204,7 +1209,7 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 	with which it is shared (permissions) and some flags. Only its creator
 	can alter its sharing targets. It may be possible to copy this object. """
 
-	# An IITreeSet of string userids
+	# An IITreeSet of entity intids
 	# TODO: FIXME: When the user is deleted and his ID goes bad, we're
 	# not listening for that. What if the ID gets reused for something else?
 	_sharingTargets = None
@@ -1251,13 +1256,18 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 		self._sharingTargets.add( _getId( target ) )
 		self.updateLastMod()
 
-	def updateSharingTargets( self, replacement_targets ):
+	def updateSharingTargets( self, replacement_targets, notify=False ):
 		"""
 		Cause this object to be shared with only the `replacement_targets` and
 		no one else.
 
 		:param replacement_targets: A collection of entities to share with.
+		:keyword notify: If True (not the default) then we will broadcast an
+			:class:`.IObjectSharingModifiedEvent` when this process is complete.
+			Set this to True only outside of externalization (when making a standalone
+			call; this is mostly true in tests).
 		"""
+		orig_targets = self.sharingTargets if notify else ()
 
 		replacement_userids = _ii_family().II.TreeSet()
 		def addToSet( target ):
@@ -1283,6 +1293,8 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 
 		if not replacement_userids:
 			self.clearSharingTargets()
+			if notify and orig_targets:
+				_znotify( ObjectSharingModifiedEvent( self, oldSharingTargets=orig_targets ) )
 			return
 
 		if self._sharingTargets is None:
@@ -1297,6 +1309,11 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 		excess_targets = _ii_family().II.difference( self._sharingTargets, replacement_userids )
 		for x in (excess_targets or ()):
 			self._sharingTargets.remove( x )
+
+		if notify:
+			new_targets = self.sharingTargets
+			if new_targets != orig_targets:
+				_znotify( ObjectSharingModifiedEvent( self, oldSharingTargets=orig_targets ) )
 
 
 	def isSharedDirectlyWith( self, wants ):
