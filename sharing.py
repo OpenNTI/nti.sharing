@@ -484,6 +484,9 @@ class SharingTargetMixin(object):
 
 
 	def is_muted( self, the_object ):
+		if nti_interfaces.IMutedInStream.providedBy( the_object ):
+			return True
+
 		if the_object is None or '_muted_oids' not in self.__dict__:
 			return False
 
@@ -719,7 +722,7 @@ class SharingTargetMixin(object):
 
 		def _make_largest_container( container, of_size, extra_pred=None ):
 			container = (item for item in container
-						 if item and item.lastModified > minAge
+						 if item is not None and item.lastModified > minAge
 						 and not self.is_ignoring_shared_data_from( item.creator )
 						 and (extra_pred is None or extra_pred(item)))
 			# Now take the "largest" (newest) of those, sorted by modification
@@ -1011,13 +1014,18 @@ class SharingSourceMixin(SharingTargetMixin):
 			else:
 				persons_following.add( following )
 
-
 		for comm in context_cache( self._get_dynamic_sharing_targets_for_read ):
 			if comm in communities_seen:
 				continue
 			for x in comm.getSharedContainer( containerId ):
 				try:
-					if x and x.creator in persons_following:
+					# Communities differ in that we only add things from people we are explicitly
+					# following (unless we are following the entire community; that's handled above)
+					# In some cases (specifically, forums) some objects we create do not get
+					# stored in our containers and only get stored in community shared containers;
+					# we are always implicitly following ourself, so they get added to
+					# XXX This is weird and wrong
+					if x is not None and (x.creator in persons_following or x.creator is self):
 						result.append( x )
 						result.updateLastModIfGreater( x.lastModified )
 				except POSKeyError: # pragma: no cover
