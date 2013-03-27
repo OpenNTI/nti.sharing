@@ -128,9 +128,17 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		# TODO: I'm supposed to be storing a Length object separately and maintaing
 		# it for each BTree, as asking for their len() can be expensive
 
+
 	def _read_current( self, container ):
-		if self._p_jar and getattr( container, '_p_jar', None ):
-			self._p_jar.readCurrent( container )
+		try:
+			# it is important to activate the object before we read current on it,
+			# so that we get a non-zero serial to record in the transaction.
+			# usually the object has already been activated, but in our case we fetch from
+			# a map and then immediately call read_current so it is probably not active.
+			container._p_activate()
+			container._p_jar.readCurrent(container)
+		except AttributeError:
+			pass
 
 	# We use -1 as values for None. This is common in test cases
 	# and possibly for deleted objects (there can only be one of these)
@@ -187,6 +195,10 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		return change
 
 	def deleteEqualContainedObject( self, contained, log_level=None ):
+		# It is important to ensure we are reading the current, consistent
+		# state of objects, as pop() does not mark the object modified if it
+		# is not found (but some other transaction could have added it while we were
+		# running, and we wouldn't get a conflict)
 		self._read_current( self._containers_modified )
 		obj_id = _getId( contained )
 		modified_map = self._containers_modified.get( contained.containerId )
@@ -265,6 +277,7 @@ def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
 			# Since we're mutating, probably based on some other object's
 			# content, make sure we're mutating the current version
 			jar.readCurrent( self )
+			container._p_activate()
 			jar.readCurrent( container )
 		sets.discard( container, nti_interfaces.IWeakRef( entity ) )
 
@@ -416,6 +429,8 @@ class SharingTargetMixin(object):
 	def __manage_mute( self, mute=True ):
 		# TODO: Horribly inefficient
 		if self._p_jar and self.containersOfShared._p_jar:
+			self.containersOfShared._p_activate()
+			self.containers_of_muted._p_activate()
 			self._p_jar.readCurrent( self.containersOfShared )
 			self._p_jar.readCurrent( self.containers_of_muted )
 		_from = self.containersOfShared
