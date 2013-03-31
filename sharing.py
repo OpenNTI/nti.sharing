@@ -1223,7 +1223,7 @@ class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin)
 
 def _ii_family():
 	intids = component.queryUtility( zc_intid.IIntIds )
-	if intids:
+	if intids is not None:
 		return intids.family
 	return BTrees.family64
 
