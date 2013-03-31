@@ -36,7 +36,7 @@ from nti.dataserver.activitystream_change import Change
 from nti.dataserver import interfaces as nti_interfaces
 from nti.dataserver.interfaces import ObjectSharingModifiedEvent
 
-from nti.externalization.oids import to_external_ntiid_oid
+from nti.externalization.oids import to_external_ntiid_oid, to_external_oid
 
 from nti.utils import sets
 
@@ -710,15 +710,19 @@ class SharingTargetMixin(object):
 
 		stream_containers = self._get_stream_cache_containers( containerId, context_cache=context_cache )
 
+		# To avoid duplicates, we keep a set of the OIDs/intids of the
+		# objects. We use this rather than the object itself for speed,
+		# (hashing the objects here showed up as a hotspot in profiling)
+		# and to ensure mutual hash/equal works
 		change_objects = set()
 		def add( item, lm=None ):
 			lm = lm or item.lastModified
 			result.append( item )
 			result.updateLastModIfGreater( lm )
-			change_objects.add( item.object )
+			change_objects.add( to_external_oid( item.object ) )
 
 		def dup( change_object ):
-			return change_object in change_objects
+			return to_external_oid( change_object ) in change_objects
 
 		def _make_largest_container( container, of_size, extra_pred=None ):
 			container = (item for item in container
