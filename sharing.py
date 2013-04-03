@@ -224,13 +224,23 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		self._containers_modified.clear()
 
 	def getContainer( self, containerId, defaultValue=None ):
-		container_map = self._containers.get( containerId )
+		"""
+		Returns something that can iterate across Change objects, or the default value.
+		The returned object also has a ``iter_after`` method that accepts a `time.time`
+		value; only changes added to the stream after that time will be returned
+		from the corresponding iterator. This can be used to efficiently combine
+		streams, picking up only newer items.
+		"""
+		container = self._containers.get( containerId )
+		if container is None:
+			return defaultValue
+		mod_container = self._containers_modified.get( containerId )
+		if mod_container is None: # pragma: no cover
+			logger.warn( "Corruption detected in %s", self )
+			return container.values()
 		# TODO: If needed, we could get a 'Last Modified' value for
 		# this returned object using self._containers_modified
-		# NOTE: The returned BTreeItems object does not actually have a
-		# __len__ method, as such; even though len() works just fine on it,
-		# it means that hamcrest has_length does not work
-		return container_map.values() if container_map else defaultValue
+		return _StreamValuesProxy( container, mod_container )
 
 	def values( self ):
 		# Iter the keys and call getContainer to get wrapping
@@ -246,6 +256,28 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 
 	def __repr__( self ):
 		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
+
+class _StreamValuesProxy(object):
+
+	__slots__ = ('_container', '_mod_container')
+
+	def __init__( self, container, mod_container ):
+		self._container = container
+		self._mod_container = mod_container
+
+	def __iter__( self ):
+		return iter(self._container.values())
+
+	def __len__( self ):
+		return len(self._container) # VERY inefficient
+
+	def iter_after( self, time ):
+		time_key = _time_to_64bit_int(time)
+		container = self._container
+		for obj_id in self._mod_container.values(time_key): # Start iterating at this time
+			change = container.get( obj_id )
+			if change is not None:
+				yield change
 
 def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
 	container = ()
@@ -315,10 +347,10 @@ class _SharingContextCache(object):
 		result = datastructures.LastModifiedCopyingUserList()
 		# must sort the accumulator, not the change objects;
 		# change objects have arbitrary comparison
-		accumulator.sort( reverse=True )
+		accumulator.sort( reverse=True ) # Newest first
 		result.extend( (x[1] for x in accumulator ) )
 		if result:
-			result.updateLastModIfGreater( result[-1].lastModified )
+			result.updateLastModIfGreater( result[0].lastModified )
 		return result
 
 	# To avoid duplicates, we keep a set of the OIDs/intids of the
@@ -543,7 +575,10 @@ class SharingTargetMixin(object):
 		if the_object is None or '_muted_oids' not in self.__dict__:
 			return False
 
-		if (getattr( the_object, 'id', None ) or '') in self._muted_oids:
+		try:
+			if (getattr( the_object, 'id', None ) or '') in self._muted_oids:
+				return True
+		except KeyError: # POSKeyError
 			return True
 		ntiid = to_external_ntiid_oid( the_object )
 		#__traceback_info__ = the_object, ntiid
@@ -746,12 +781,15 @@ class SharingTargetMixin(object):
 		self.streamCache.deleteEqualContainedObject( change.object )
 
 	def _get_stream_cache_containers( self, containerId, context_cache=None ):
-		""" Return a sequence of stream cache containers for the id. """
+		"""
+		 Return a sequence of stream cache containers for the id.
+		 An item can optionally be a tuple of the container and an extra predicate to
+		 apply to items in that container.
+		 """
 		return (self.streamCache.getContainer( containerId, () ),)
 
-	def getContainedStream( self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE, context_cache=None ):
-		if context_cache is None:
-			context_cache = _SharingContextCache()
+	def getContainedStream( self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE, before=-1, context_cache=None ):
+		context_cache = context_cache or _SharingContextCache()
 		# The contained stream is an amalgamation of the traffic explicitly
 		# to us, plus the traffic of things we're following. We merge these together and return
 		# just the ones that fit the criteria.
@@ -762,22 +800,46 @@ class SharingTargetMixin(object):
 
 		#result = context_cache._accumulator if context_cache._accumulator is not None else
 		# We maintain this as a heap, with the newest item at the index 0
-		if context_cache._accumulator is None:
+		if context_cache.get_accumulator() is None:
 			accumulator = []
 			result = datastructures.LastModifiedCopyingUserList()
 		else:
-			accumulator = context_cache._accumulator
+			accumulator = context_cache.get_accumulator()
 			result = None
 
 		stream_containers = self._get_stream_cache_containers( containerId, context_cache=context_cache )
 
+
 		for stream_container in stream_containers:
+			if () == stream_container:
+				continue
+			_predicate = None
+			if isinstance(stream_container, tuple):
+				_predicate = stream_container[1]
+				stream_container = stream_container[0]
+
+			# Once the heap is full, we can start efficiently looking at only the newer
+			# changes (not even loading them from the database), if the container supports it.
+			# We can also do this upon request
+			if hasattr(stream_container,'iter_after'):
+				if len(accumulator) >= maxCount:
+					stream_container = stream_container.iter_after(accumulator[0][0])
+				elif minAge > 0:
+					stream_container = stream_container.iter_after(minAge)
+
 			for change in stream_container:
 				if change is None:
 					continue
 				# If the heap is full, and this item is older than the oldest thing in the
 				# heap, no need to look any further
-				change_lastModified = change.lastModified
+				try:
+					change_lastModified = change.lastModified
+					if change_lastModified < minAge or (before != -1 and change_lastModified >= before):
+						continue
+				except KeyError: # POSKeyError
+					logger.warn( "POSKeyError in stream %s", containerId )
+					continue
+
 				if len(accumulator) == maxCount and change_lastModified <= accumulator[0][0]:
 					continue
 
@@ -785,12 +847,12 @@ class SharingTargetMixin(object):
 				if data is None or context_cache._has_seen_object(data):
 					continue
 
-				if self.is_ignoring_shared_data_from( change.creator ):
+				if (self.is_ignoring_shared_data_from( change.creator )
+					or nti_interfaces.IDeletedObjectPlaceholder.providedBy( data )
+					or self.is_muted(data)):
 					continue
 
-				if nti_interfaces.IDeletedObjectPlaceholder.providedBy( data ):
-					continue
-				if self.is_muted(data):
+				if _predicate is not None and not _predicate(change):
 					continue
 
 				# Yay, we got one
@@ -1014,11 +1076,14 @@ class SharingSourceMixin(SharingTargetMixin):
 				# TODO: Better interface
 			result += following._get_stream_cache_containers( containerId )
 
+		def community_predicate(change):
+			try:
+				return change.creator in persons_followed
+			except KeyError: #POSKeyError
+				return False
 
-		for comm in context_cache(self._get_dynamic_sharing_targets_for_read):
-			result.append( [x for x in comm.streamCache.getContainer( containerId, () )
-							if x is not None and x.creator in persons_followed] )
-
+		result.extend( ((comm.streamCache.getContainer(containerId,()),community_predicate)
+						for comm in context_cache(self._get_dynamic_sharing_targets_for_read)) )
 
 		return result
 
