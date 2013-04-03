@@ -308,12 +308,15 @@ class _SharingContextCache(object):
 		return self._accumulator
 
 	def to_result(self, accumulator=None):
+		"Destroys accumulator"
 		if accumulator is None:
 			accumulator = self._accumulator
 
 		result = datastructures.LastModifiedCopyingUserList()
+		# must sort the accumulator, not the change objects;
+		# change objects have arbitrary comparison
+		accumulator.sort( reverse=True )
 		result.extend( (x[1] for x in accumulator ) )
-		result.sort( reverse=True )
 		if result:
 			result.updateLastModIfGreater( result[-1].lastModified )
 		return result
