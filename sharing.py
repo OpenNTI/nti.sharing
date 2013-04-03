@@ -11,6 +11,8 @@ logger = __import__('logging').getLogger( __name__ )
 
 import six
 import heapq
+heapq_heappush = heapq.heappush
+heapq_heappushpop = heapq.heappushpop
 import collections
 
 from zope import component
@@ -290,6 +292,54 @@ class _SharingContextCache(object):
 
 	def __init__( self ):
 		self._data = {}
+		self._dups = set()
+		self._accumulator = None
+		self.lastModified = 0
+		self.communities_followed = None
+		self.persons_followed = None
+
+	def updateLastModIfGreater( self, t ):
+		self.lastModified = max(self.lastModified,t)
+
+	def make_accumulator(self):
+		self._accumulator = datastructures.LastModifiedCopyingUserList()
+
+	def get_accumulator(self):
+		return self._accumulator
+
+	def to_result(self, accumulator=None):
+		if accumulator is None:
+			accumulator = self._accumulator
+
+		result = datastructures.LastModifiedCopyingUserList()
+		result.extend( (x[1] for x in accumulator ) )
+		result.sort( reverse=True )
+		if result:
+			result.updateLastModIfGreater( result[-1].lastModified )
+		return result
+
+	# To avoid duplicates, we keep a set of the OIDs/intids of the
+	# objects. We use this rather than the object itself for speed,
+	# (hashing the objects here showed up as a hotspot in profiling)
+	# and to ensure mutual hash/equal works
+	def _has_seen_object( self, obj ):
+		return id(obj) in self._dups
+
+	def _note_seen_object( self, obj ):
+		self._dups.add( id(obj) )
+
+
+	def _build_entities_followed_for_read(self, entity):
+		if self.communities_followed is not None:
+			return
+		communities_followed = self.communities_followed = []
+		persons_followed = self.persons_followed = []
+
+		for following in self(entity._get_entities_followed_for_read):
+			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
+				communities_followed.append( following )
+			else:
+				persons_followed.append( following )
 
 	def __call__( self, func ):
 		# makes many assumptions. Func must return an iterable that we
@@ -706,88 +756,57 @@ class SharingTargetMixin(object):
 		# may be more important than things I'm following, but only before some age cutoff. For the
 		# moment, we are actually merging all this activity together, regardless of source
 		# TODO: These data structures could and should be optimized for this.
-		result = datastructures.LastModifiedCopyingUserList()
+
+		#result = context_cache._accumulator if context_cache._accumulator is not None else
+		# We maintain this as a heap, with the newest item at the index 0
+		if context_cache._accumulator is None:
+			accumulator = []
+			result = datastructures.LastModifiedCopyingUserList()
+		else:
+			accumulator = context_cache._accumulator
+			result = None
 
 		stream_containers = self._get_stream_cache_containers( containerId, context_cache=context_cache )
 
-		# To avoid duplicates, we keep a set of the OIDs/intids of the
-		# objects. We use this rather than the object itself for speed,
-		# (hashing the objects here showed up as a hotspot in profiling)
-		# and to ensure mutual hash/equal works
-		change_objects = set()
-		def add( item, lm=None ):
-			lm = lm or item.lastModified
-			result.append( item )
-			result.updateLastModIfGreater( lm )
-			change_objects.add( to_external_oid( item.object ) )
-
-		def dup( change_object ):
-			return to_external_oid( change_object ) in change_objects
-
-		def _make_largest_container( container, of_size, extra_pred=None ):
-			container = (item for item in container
-						 if item is not None and item.lastModified > minAge
-						 and not self.is_ignoring_shared_data_from( item.creator )
-						 and (extra_pred is None or extra_pred(item)))
-			# Now take the "largest" (newest) of those, sorted by modification
-			# (We actually take more than the stream size, to try to ensure that we
-			# can fulfill the request)
-			container = heapq.nlargest( of_size, container, key=lambda i: i.lastModified )
-			return container
-
-		# First, get the N largest of all the containers, and then
-		most_recent_in_containers = []
 		for stream_container in stream_containers:
-			# If the container is potentially larger than the stream size,
-			# we want to take only its most recent items, and then only the ones that
-			# match our other criteria
-			# Start by defining a generator to extract items that match
+			for change in stream_container:
+				if change is None:
+					continue
+				# If the heap is full, and this item is older than the oldest thing in the
+				# heap, no need to look any further
+				change_lastModified = change.lastModified
+				if len(accumulator) == maxCount and change_lastModified <= accumulator[0][0]:
+					continue
 
-			# Now take the largest of those, sorted by modification
-			# (We actually take more than the stream size, to try to ensure that we
-			# can fulfill the request)
-			# We sadly have to again apply muting here so that things in the community
-			# caches get our muting filters applied to them; likewise, things that are just
-			# deleted placeholders don't need to show up in the stream, they are only
-			# relevant in the original context (mostly used for forum entries or moderated things)
-			container = _make_largest_container( stream_container, maxCount * 2, lambda x: not self.is_muted(x.object) and not nti_interfaces.IDeletedObjectPlaceholder.providedBy( x.object ) )
+				data = change.object
+				if data is None or context_cache._has_seen_object(data):
+					continue
 
-			# In order to heapq.merge, these have to be smallest to largest
-			container.reverse()
-			most_recent_in_containers.append( ((item.lastModified, item) for item in container) )
+				if self.is_ignoring_shared_data_from( change.creator ):
+					continue
 
-		for _, item in reversed(list(heapq.merge(*most_recent_in_containers))):
-			if not dup( item.object ):
-				add( item )
+				if nti_interfaces.IDeletedObjectPlaceholder.providedBy( data ):
+					continue
+				if self.is_muted(data):
+					continue
 
-				if len( result ) >= maxCount:
-					break
+				# Yay, we got one
+				context_cache._note_seen_object(data)
+				context_cache.updateLastModIfGreater( change_lastModified )
 
-		if len( result ) >= maxCount:
-			return result
+				heaped = (change_lastModified, change)
+				if not accumulator: # starting out
+					accumulator.append( heaped )
+				elif len(accumulator) < maxCount: # growing the heap
+					heapq_heappush( accumulator, heaped )
+				else: # heap full, we may or may not have something newer
+					heapq_heappushpop( accumulator, heaped )
 
 
-		# If we get here, then we weren't able to satisfy the request from the caches. Must walk
-		# through the shared items directly.
-		# We should probably be able to satisfy the request from the people we
-		# follow. If not, we try to fill in with everything shared with us/followed by us
-		# being careful to avoid duplicating things present in the stream
-		# TODO: We've lost change information for these items.
-		extras_needed = maxCount - len(result)
-		for item in _make_largest_container( self.getSharedContainer( containerId, context_cache=context_cache ), extras_needed, lambda x: not dup(x) ):
-			change = Change( Change.SHARED, item )
-			change.creator = item.creator or self
-
-			# Since we're fabricating a change for this item,
-			# we know it can be no later than when the item itself was last changed
-			change.lastModified = item.lastModified
-
-			add( change, item.lastModified )
-
-			if len(result) >= maxCount:
-				break
-
-		# Well we've done the best that we can.
+		if result is not None and accumulator:
+			# We aren't accumulating for later, and we found data
+			# Put them in newest first
+			result = context_cache.to_result( accumulator )
 		return result
 
 	def _acceptIncomingChange( self, change, direct=True ):
@@ -984,18 +1003,18 @@ class SharingSourceMixin(SharingTargetMixin):
 		# whole thing (ignores are filtered in the parent method). If
 		# it's a person, we take stuff they've shared to communities
 		# we're a member of
+		context_cache._build_entities_followed_for_read(self)
+		communities_followed = context_cache.communities_followed
+		persons_followed = context_cache.persons_followed
 
-		persons_following = set()
-		for following in context_cache(self._get_entities_followed_for_read):
-			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
+		for following in communities_followed:
 				# TODO: Better interface
-				result += following._get_stream_cache_containers( containerId )
-			else:
-				persons_following.add( following )
+			result += following._get_stream_cache_containers( containerId )
+
 
 		for comm in context_cache(self._get_dynamic_sharing_targets_for_read):
 			result.append( [x for x in comm.streamCache.getContainer( containerId, () )
-							if x is not None and x.creator in persons_following] )
+							if x is not None and x.creator in persons_followed] )
 
 
 		return result
@@ -1018,22 +1037,22 @@ class SharingSourceMixin(SharingTargetMixin):
 		# internally)
 		# TODO: This needs much optimization. And things like paging will
 		# be important.
+		context_cache._build_entities_followed_for_read(self)
+		persons_following = context_cache.persons_followed
+		communities_seen = context_cache.communities_followed
+		for following in communities_seen:
+			__traceback_info__ = following
+			if following == self:
+				continue
+			for x in following.getSharedContainer( containerId ):
+				try:
+					if x is not None and not self.is_ignoring_shared_data_from( x.creator ):
+						result.append( x )
+						result.updateLastModIfGreater( x.lastModified )
+				except POSKeyError: # pragma: no cover
+					# an object gone missing. This is bad. NOTE: it may be something nested in x
+					logger.warning( "Shared object (%s) missing in '%s' from '%s' to '%s'", type(x), containerId,  following, self )
 
-		persons_following = set()
-		communities_seen = set()
-		for following in context_cache( self._get_entities_followed_for_read ):
-			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
-				communities_seen.add( following )
-				for x in following.getSharedContainer( containerId ):
-					try:
-						if x is not None and not self.is_ignoring_shared_data_from( x.creator ):
-							result.append( x )
-							result.updateLastModIfGreater( x.lastModified )
-					except POSKeyError: # pragma: no cover
-						# an object gone missing. This is bad. NOTE: it may be something nested in x
-						logger.warning( "Shared object (%s) missing in '%s' from '%s' to '%s'", type(x), containerId,  following, self )
-			else:
-				persons_following.add( following )
 
 		for comm in context_cache( self._get_dynamic_sharing_targets_for_read ):
 			if comm in communities_seen:
@@ -1388,7 +1407,7 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 		return set( (x for x in IntidResolvingIterable( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' )
 					if x is not None and hasattr( x, 'username') ) )
 
-	def xxx_isReadableByAnyIdOfUser( self, ids, family=None ):
+	def xxx_isReadableByAnyIdOfUser( self, remote_user, ids, family=None ):
 		"""
 		Shortcut convenience method to check if this object is shared with
 		any of the intids in ids. These ids come from the
