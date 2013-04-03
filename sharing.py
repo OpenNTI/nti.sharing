@@ -950,6 +950,23 @@ class SharingSourceMixin(SharingTargetMixin):
 		""" :returns: Iterable names of dynamic sharing targets we belong to. """
 		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
 
+	@property
+	def xxx_intids_of_memberships_and_self( self ):
+		"""
+		A shortcut usable with :meth:`ShareableMixin.xxx_isSharedWithAnyId`.
+
+		:returns: A TreeSet.
+		"""
+
+		intids = component.getUtility( zc_intid.IIntIds )
+		family = intids.family
+
+		result = family.II.TreeSet()
+		result.add( intids.getId( self ) )
+		result.update( (intids.getId(x) for x in self.dynamic_memberships) )
+
+		return result
+
 	def _get_dynamic_sharing_targets_for_read( self ):
 		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
 
@@ -1370,3 +1387,15 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 		# out from under us
 		return set( (x for x in IntidResolvingIterable( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' )
 					if x is not None and hasattr( x, 'username') ) )
+
+	def xxx_isReadableByAnyIdOfUser( self, ids, family=None ):
+		"""
+		Shortcut convenience method to check if this object is shared with
+		any of the intids in ids. These ids come from the
+		flattened membership ids.
+		"""
+		if not self._may_have_sharing_targets():
+			return False
+
+		family = family or _ii_family()
+		return bool(family.II.intersection( self._sharingTargets, ids ) )
