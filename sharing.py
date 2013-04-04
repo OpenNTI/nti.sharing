@@ -69,17 +69,7 @@ class _SharedContainedObjectStorage(IntidContainedStorage):
 	def _check_contained_object_for_storage( self, contained ):
 		datastructures.check_contained_object_for_storage( contained )
 
-
-
-import struct
-def _time_to_64bit_int( value ):
-	if value is None: # pragma: no cover
-		raise ValueError("For consistency, you must supply the lastModified value" )
-	# ! means network byte order, in case we cross architectures
-	# anywhere (doesn't matter), but also causes the sizes to be
-	# standard, which may matter between 32 and 64 bit machines
-	# Q is 64-bit unsigned int, d is 64-bit double
-	return struct.unpack( b'!Q', struct.pack( b'!d', value ) )[0]
+from nti.zodb.containers import time_to_64bit_int as _time_to_64bit_int
 
 class _SharedStreamCache(persistent.Persistent,Contained):
 	"""
