@@ -226,9 +226,11 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 	def getContainer( self, containerId, defaultValue=None ):
 		"""
 		Returns something that can iterate across Change objects, or the default value.
-		The returned object also has a ``iter_after`` method that accepts a `time.time`
-		value; only changes added to the stream after that time will be returned
-		from the corresponding iterator. This can be used to efficiently combine
+		The returned object also has a ``iter_between`` method that accepts up to two `time.time`
+		values (min,max);. If min is given and not none, that will be the lower bound timestamp
+		for changes; if max is given and not none, that will be the upper bound timestamp (if max
+		is greater than min, no changes are returned). A value of None for either
+		boundary means no limit. This can be used to efficiently combine
 		streams, picking up only newer items.
 		"""
 		container = self._containers.get( containerId )
@@ -271,10 +273,11 @@ class _StreamValuesProxy(object):
 	def __len__( self ):
 		return len(self._container) # VERY inefficient
 
-	def iter_after( self, time ):
-		time_key = _time_to_64bit_int(time)
+	def iter_between( self, min_age, max_age ):
+		min_time_key = _time_to_64bit_int(min_age) if min_age else None
+		max_time_key = _time_to_64bit_int(max_age) if max_age else None
 		container = self._container
-		for obj_id in self._mod_container.values(time_key): # Start iterating at this time
+		for obj_id in self._mod_container.values(min_time_key, max_time_key):
 			change = container.get( obj_id )
 			if change is not None:
 				yield change
@@ -788,7 +791,22 @@ class SharingTargetMixin(object):
 		 """
 		return (self.streamCache.getContainer( containerId, () ),)
 
-	def getContainedStream( self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE, before=-1, context_cache=None ):
+	def getContainedStream( self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE, before=-1, context_cache=None, predicate=None ):
+		"""
+		Return the most recent items from the stream. Only changes that do not refer to missing or deleted
+		objects are returned. Only changes that were created by extant users are returned.
+
+		:param containerId: Look in this container.
+		:keyword maxCount: Return at most this many items.
+		:keyword before: A ``time.time`` value; only items older than this timestamp
+			will be considered. Use this for paging backwards through time.
+		:keyword context_cache: Set this to a :class:`._SharingContextCache` if you will be making multiple
+			requests for different containers. Call ``make_accumulator`` on it before you begin,
+			and ``to_result`` on it when you are finished. This is the most efficient way to sort
+			and page through multiple containers.
+		:keyword predicate: Set this to a callable that returns True on items to keep. It will
+			be applied after all our built-in logic.
+		"""
 		context_cache = context_cache or _SharingContextCache()
 		# The contained stream is an amalgamation of the traffic explicitly
 		# to us, plus the traffic of things we're following. We merge these together and return
@@ -813,19 +831,21 @@ class SharingTargetMixin(object):
 		for stream_container in stream_containers:
 			if () == stream_container:
 				continue
-			_predicate = None
+			_container_predicate = None
 			if isinstance(stream_container, tuple):
-				_predicate = stream_container[1]
+				_container_predicate = stream_container[1]
 				stream_container = stream_container[0]
 
-			# Once the heap is full, we can start efficiently looking at only the newer
-			# changes (not even loading them from the database), if the container supports it.
-			# We can also do this upon request
-			if hasattr(stream_container,'iter_after'):
+			if hasattr(stream_container,'iter_between'):
+				minAge = minAge if minAge > 0 else None
+				maxAge = before if before > 0 else None
+				# Once the heap is full, we can start efficiently looking at only the newer
+				# changes (not even loading them from the database), if the container supports it.
+				# We can also do this upon request
 				if len(accumulator) >= maxCount:
-					stream_container = stream_container.iter_after(accumulator[0][0])
-				elif minAge > 0:
-					stream_container = stream_container.iter_after(minAge)
+					minAge = accumulator[0][0]
+
+				stream_container = stream_container.iter_between(minAge, maxAge)
 
 			for change in stream_container:
 				if change is None:
@@ -847,12 +867,18 @@ class SharingTargetMixin(object):
 				if data is None or context_cache._has_seen_object(data):
 					continue
 
-				if (self.is_ignoring_shared_data_from( change.creator )
+				change_creator = change.creator
+				if (not change.creator
+					or self.is_ignoring_shared_data_from( change_creator )
 					or nti_interfaces.IDeletedObjectPlaceholder.providedBy( data )
 					or self.is_muted(data)):
 					continue
 
-				if _predicate is not None and not _predicate(change):
+				if _container_predicate is not None and not _container_predicate(change):
+					continue
+
+				# Last, if the user supplied a predicate, try it.
+				if predicate is not None and not predicate(change):
 					continue
 
 				# Yay, we got one
