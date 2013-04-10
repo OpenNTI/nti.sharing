@@ -306,7 +306,10 @@ def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
 			jar.readCurrent( self )
 			container._p_activate()
 			jar.readCurrent( container )
-		sets.discard( container, nti_interfaces.IWeakRef( entity ) )
+		wref = nti_interfaces.IWeakRef(entity)
+		__traceback_info__ = entity, wref
+		assert hasattr(wref, 'username')
+		sets.discard( container, wref )
 
 class _SharingContextCache(object):
 	"""
@@ -1021,7 +1024,10 @@ class SharingSourceMixin(SharingTargetMixin):
 		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
 		"""
 		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
-		self._dynamic_memberships.add( nti_interfaces.IWeakRef( dynamic_sharing_target ) )
+		wref = nti_interfaces.IWeakRef( dynamic_sharing_target )
+		__traceback_info__ = dynamic_sharing_target, wref
+		assert hasattr( wref, 'username' )
+		self._dynamic_memberships.add( wref )
 
 	def record_no_longer_dynamic_member( self, dynamic_sharing_target ):
 		"""
