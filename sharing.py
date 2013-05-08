@@ -36,9 +36,12 @@ from ZODB.POSException import POSKeyError
 from nti.dataserver import datastructures
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import interfaces as nti_interfaces
-from nti.dataserver.interfaces import ObjectSharingModifiedEvent
 
-from nti.externalization.oids import to_external_ntiid_oid, to_external_oid
+from nti.dataserver.interfaces import ObjectSharingModifiedEvent
+from nti.dataserver.interfaces import EntityFollowingEvent
+from nti.dataserver.interfaces import FollowerAddedEvent
+
+from nti.externalization.oids import to_external_ntiid_oid
 
 from nti.utils import sets
 
@@ -988,8 +991,15 @@ class SharingSourceMixin(SharingTargetMixin):
 		return self._lazy_create_ootreeset_for_wref()
 
 	def follow( self, source ):
-		""" Adds `source` to the list of followers. """
-		self._entities_followed.add( nti_interfaces.IWeakRef(source) )
+		"""
+		Adds ``source`` to the list of followers.
+
+		If ``source`` is actually added, notifies an :class:`.IEntityFollowingEvent`
+		and :class:`.IFollowerAddedEvent`.
+		 """
+		if self._entities_followed.add( nti_interfaces.IWeakRef(source) ):
+			_znotify( EntityFollowingEvent( self, source ) )
+			_znotify( FollowerAddedEvent( source, self ) )
 		return True
 
 	def stop_following( self, source ):
