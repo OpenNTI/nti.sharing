@@ -1349,7 +1349,9 @@ class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin)
 	def sharingTargets(self):
 		if nti_interfaces.IDefaultPublished.providedBy( self ):
 			return self.sharingTargetsWhenPublished
-		return ()
+		return self._non_published_sharing_targets
+
+	_non_published_sharing_targets = ()
 
 	@property
 	def sharingTargetsWhenPublished(self):
