@@ -5,52 +5,53 @@ Classes related to managing the sharing process.
 
 $Id$
 """
-from __future__ import print_function, unicode_literals
+from __future__ import print_function, unicode_literals, absolute_import
+__docformat__ = "restructuredtext en"
 
-logger = __import__('logging').getLogger( __name__ )
+logger = __import__('logging').getLogger(__name__)
 
 import six
 import heapq
+import collections
+
 heapq_heappush = heapq.heappush
 heapq_heappushpop = heapq.heappushpop
-import collections
 
 from zope import component
 from zope import interface
-from zope.event import notify as _znotify
 from zope.location import locate
 from zope.deprecation import deprecate
+from zope.event import notify as _znotify
 from zope.container.contained import Contained
 from zope.cachedescriptors.property import Lazy
 
-from zc import intid as zc_intid
-from nti.intid.containers import IntidResolvingIterable
-from nti.intid.containers import IntidContainedStorage
+import persistent
 
 import BTrees
-import persistent
-from ZODB import loglevels
 from BTrees.OOBTree import OOTreeSet
+
+from ZODB import loglevels
 from ZODB.POSException import POSKeyError
+
+from zc import intid as zc_intid
 
 from nti.dataserver import datastructures
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import interfaces as nti_interfaces
-
-from nti.dataserver.interfaces import ObjectSharingModifiedEvent
-from nti.dataserver.interfaces import EntityFollowingEvent
 from nti.dataserver.interfaces import FollowerAddedEvent
+from nti.dataserver.interfaces import EntityFollowingEvent
+from nti.dataserver.interfaces import ObjectSharingModifiedEvent
 
 from nti.externalization.oids import to_external_ntiid_oid
 
+from nti.intid.containers import IntidResolvingIterable
+from nti.intid.containers import IntidContainedStorage
+
 from nti.utils import sets
-
-
 
 # TODO: This all needs refactored. The different pieces need to be broken into
 # different interfaces and adapters, probably using annotations, to get most
 # of this out of the core object structure, and to make more things possible.
-
 
 _marker = object()
 def _getId( contained, when_none=_marker ):
