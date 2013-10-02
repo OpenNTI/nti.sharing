@@ -38,9 +38,12 @@ from zc import intid as zc_intid
 from nti.dataserver import datastructures
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import interfaces as nti_interfaces
+from nti.dataserver.interfaces import StopFollowingEvent
 from nti.dataserver.interfaces import FollowerAddedEvent
 from nti.dataserver.interfaces import EntityFollowingEvent
 from nti.dataserver.interfaces import ObjectSharingModifiedEvent
+from nti.dataserver.interfaces import StopDynamicMembershipEvent
+from nti.dataserver.interfaces import StartDynamicMembershipEvent
 
 from nti.externalization.oids import to_external_ntiid_oid
 
@@ -1008,6 +1011,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		Ensures that `source` is no longer in the list of followers.
 		"""
 		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_followed', source )
+		_znotify(StopFollowingEvent(self, source))
 
 	@property
 	@deprecate("Prefer `entities_followed`")
@@ -1039,6 +1043,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		__traceback_info__ = dynamic_sharing_target, wref
 		assert hasattr( wref, 'username' )
 		self._dynamic_memberships.add( wref )
+		_znotify(StartDynamicMembershipEvent(self, dynamic_sharing_target))
 
 	def record_no_longer_dynamic_member( self, dynamic_sharing_target ):
 		"""
@@ -1049,6 +1054,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		"""
 		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
 		_remove_entity_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships', dynamic_sharing_target )
+		_znotify(StopDynamicMembershipEvent(self, dynamic_sharing_target))
 
 	@property
 	@deprecate("Prefer `dynamic_memberships` or `usernames_of_dynamic_memberships`")
