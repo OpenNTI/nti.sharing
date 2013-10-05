@@ -17,7 +17,8 @@ does_not = is_not
 from hamcrest import not_none
 from hamcrest import has_item
 from nti.dataserver.tests.mock_dataserver import SharedConfiguringTestBase
-from nti.tests import is_false, time_monotonically_increases
+from nti.testing.matchers import is_false
+from nti.testing.time import time_monotonically_increases
 
 import fudge
 import time
