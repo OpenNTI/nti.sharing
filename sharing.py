@@ -1080,7 +1080,10 @@ class SharingSourceMixin(SharingTargetMixin):
 		This can be much faster than checking `entity in self.dynamic_memberships`
 		"""
 		# Checking against the weakref avoids waking up all the objects
-		return nti_interfaces.IWeakRef(entity, None) in self._dynamic_memberships
+		try:
+			return nti_interfaces.IWeakRef(entity, None) in self._dynamic_memberships
+		except TypeError:
+			return False # "Object has default comparison"
 
 	@property
 	def xxx_intids_of_memberships_and_self( self ):
