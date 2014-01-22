@@ -1073,6 +1073,15 @@ class SharingSourceMixin(SharingTargetMixin):
 		""" :returns: Iterable names of dynamic sharing targets we belong to. """
 		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
 
+	def is_dynamic_member_of(self, entity):
+		"""
+		Test if this object is a dynamic member of the given entity.
+
+		This can be much faster than checking `entity in self.dynamic_memberships`
+		"""
+		# Checking against the weakref avoids waking up all the objects
+		return nti_interfaces.IWeakRef(entity, None) in self._dynamic_memberships
+
 	@property
 	def xxx_intids_of_memberships_and_self( self ):
 		"""
