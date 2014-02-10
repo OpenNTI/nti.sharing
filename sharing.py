@@ -1297,7 +1297,7 @@ class AbstractReadableSharedMixin(object):
 		for x in self.sharingTargets:
 			result.add( x ) # always this one
 			# then expand if needed
-			iterable = nti_interfaces.IEntityIterable( x, () )
+			iterable = nti_interfaces.ISharingTargetEntityIterable( x, () )
 			result.update( iterable )
 
 		return result
