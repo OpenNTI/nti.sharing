@@ -8,7 +8,7 @@ from __future__ import print_function, unicode_literals, absolute_import
 #disable: accessing protected members, too many methods
 #pylint: disable=W0212,R0904
 
-
+import unittest
 from hamcrest import assert_that
 from hamcrest import has_length
 from hamcrest import has_property
@@ -16,7 +16,7 @@ from hamcrest import is_not, is_
 does_not = is_not
 from hamcrest import not_none
 from hamcrest import has_item
-from nti.dataserver.tests.mock_dataserver import SharedConfiguringTestBase
+from nti.dataserver.tests.mock_dataserver import SharedConfiguringTestLayer
 from nti.testing.matchers import is_false
 from nti.testing.time import time_monotonically_increases
 
@@ -40,7 +40,9 @@ class Change(persistent.Persistent):
 	def __repr__( self ):
 		return "<Change %s %s %s>" % (self.id, self.lastModified, self.containerId)
 
-class TestStreamSharedCache(SharedConfiguringTestBase):
+class TestStreamSharedCache(unittest.TestCase):
+
+	layer = SharedConfiguringTestLayer
 
 	@fudge.patch( 'nti.dataserver.sharing._getId' )
 	def test_size_caps(self, fake_getId):
