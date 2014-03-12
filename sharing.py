@@ -5,7 +5,7 @@ Classes related to managing the sharing process.
 
 $Id$
 """
-from __future__ import print_function, unicode_literals, absolute_import
+from __future__ import print_function, unicode_literals, absolute_import, division
 __docformat__ = "restructuredtext en"
 
 logger = __import__('logging').getLogger(__name__)
@@ -65,9 +65,9 @@ def _getId( contained, when_none=_marker ):
 
 class _SharedContainedObjectStorage(IntidContainedStorage):
 	"""
-	An object that implements something like the interface of :class:`datastructures.ContainedStorage`,
-	but in a simpler form using only intids, and assuming that we never
-	need to look objects up by container/localID pairs.
+	An object that implements something like the interface of
+	:class:`datastructures.ContainedStorage`, but in a simpler form using only intids,
+	and assuming that we never need to look objects up by container/localID pairs.
 	"""
 
 	# This class exists for backwards compatibilty in pickles, and
@@ -103,7 +103,7 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		if family is not None: # pragma: no cover
 			self.family = family
 		else:
-			intids = component.queryUtility( zc_intid.IIntIds )
+			intids = component.queryUtility(zc_intid.IIntIds)
 			if intids is not None:
 				self.family = intids.family
 
@@ -143,8 +143,8 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 	# and possibly for deleted objects (there can only be one of these)
 
 	def addContainedObject( self, change ):
-		for _containers, factory in ( (self._containers_modified, BTrees.family64.II.BTree),
-									  (self._containers, self.family.IO.BTree) ):
+		for _containers, factory in ((self._containers_modified, self.family.II.BTree),
+									 (self._containers, self.family.IO.BTree)):
 			self._read_current( _containers )
 			container_map = _containers.get( change.containerId )
 			self._read_current( container_map )
