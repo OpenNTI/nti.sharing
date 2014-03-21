@@ -52,6 +52,8 @@ from nti.intid.containers import IntidContainedStorage
 
 from nti.utils import sets
 
+from nti.wref import interfaces as wref_interfaces
+
 # TODO: This all needs refactored. The different pieces need to be broken into
 # different interfaces and adapters, probably using annotations, to get most
 # of this out of the core object structure, and to make more things possible.
@@ -313,7 +315,7 @@ def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
 			jar.readCurrent( self )
 			container._p_activate()
 			jar.readCurrent( container )
-		wref = nti_interfaces.IWeakRef(entity)
+		wref = wref_interfaces.IWeakRef(entity)
 		__traceback_info__ = entity, wref
 		assert hasattr(wref, 'username')
 		sets.discard( container, wref )
@@ -623,7 +625,7 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		wref = nti_interfaces.IWeakRef( source )
+		wref = wref_interfaces.IWeakRef(source)
 		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted', wref )
 		self._entities_accepted.add( wref )
 		return True
@@ -656,7 +658,7 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		wref = nti_interfaces.IWeakRef( source )
+		wref = wref_interfaces.IWeakRef(source)
 		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_accepted', wref )
 		self._entities_not_accepted.add( wref )
 		return True
@@ -679,7 +681,7 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		wref = nti_interfaces.IWeakRef( source )
+		wref = wref_interfaces.IWeakRef(source)
 		for k in ("_entities_accepted", '_entities_not_accepted' ):
 			_remove_entity_from_named_lazy_set_of_wrefs( self, k, wref )
 
@@ -1001,7 +1003,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		If ``source`` is actually added, notifies an :class:`.IEntityFollowingEvent`
 		and :class:`.IFollowerAddedEvent`.
 		 """
-		if self._entities_followed.add( nti_interfaces.IWeakRef(source) ):
+		if self._entities_followed.add(wref_interfaces.IWeakRef(source)):
 			_znotify( EntityFollowingEvent( self, source ) )
 			_znotify( FollowerAddedEvent( source, self ) )
 		return True
@@ -1039,7 +1041,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
 		"""
 		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
-		wref = nti_interfaces.IWeakRef( dynamic_sharing_target )
+		wref = wref_interfaces.IWeakRef(dynamic_sharing_target)
 		__traceback_info__ = dynamic_sharing_target, wref
 		assert hasattr( wref, 'username' )
 		self._dynamic_memberships.add( wref )
@@ -1081,7 +1083,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		"""
 		# Checking against the weakref avoids waking up all the objects
 		try:
-			return nti_interfaces.IWeakRef(entity, None) in self._dynamic_memberships
+			return wref_interfaces.IWeakRef(entity, None) in self._dynamic_memberships
 		except TypeError:
 			return False # "Object has default comparison"
 
