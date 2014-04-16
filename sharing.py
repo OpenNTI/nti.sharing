@@ -1087,6 +1087,12 @@ class SharingSourceMixin(SharingTargetMixin):
 		except TypeError:
 			return False # "Object has default comparison"
 
+	def _xxx_extra_intids_of_memberships(self):
+		"""
+		Subclasses can extend the set of things that participate in
+		security.
+		"""
+
 	@property
 	def xxx_intids_of_memberships_and_self( self ):
 		"""
@@ -1101,6 +1107,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		result = family.II.TreeSet()
 		result.add( intids.getId( self ) )
 		result.update( (intids.getId(x) for x in self.dynamic_memberships) )
+		result.update( self._xxx_extra_intids_of_memberships() )
 
 		return result
 
