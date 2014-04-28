@@ -1044,8 +1044,8 @@ class SharingSourceMixin(SharingTargetMixin):
 		wref = wref_interfaces.IWeakRef(dynamic_sharing_target)
 		__traceback_info__ = dynamic_sharing_target, wref
 		assert hasattr( wref, 'username' )
-		self._dynamic_memberships.add( wref )
-		_znotify(StartDynamicMembershipEvent(self, dynamic_sharing_target))
+		if self._dynamic_memberships.add( wref ): # calls jar.readCurrent; returns whether it actually changed
+			_znotify(StartDynamicMembershipEvent(self, dynamic_sharing_target))
 
 	def record_no_longer_dynamic_member( self, dynamic_sharing_target ):
 		"""
