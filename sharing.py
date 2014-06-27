@@ -145,14 +145,19 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 	# and possibly for deleted objects (there can only be one of these)
 
 	def addContainedObject( self, change ):
+		change_containerId = change.containerId
+		if change_containerId is None:
+			# would raise ValueError: default comparison in btree;
+			# note that an empty CID is ok
+			raise ValueError("Missing container id", change)
 		for _containers, factory in ((self._containers_modified, self.family.II.BTree),
 									 (self._containers, self.family.IO.BTree)):
 			self._read_current( _containers )
-			container_map = _containers.get( change.containerId )
+			container_map = _containers.get( change_containerId )
 			self._read_current( container_map )
 			if container_map is None:
 				container_map = factory()
-				_containers[change.containerId] = container_map
+				_containers[change_containerId] = container_map
 		# And so at this point, `container_map` is an IOBTree
 
 		obj_id = _getId( change.object, -1 )
@@ -164,7 +169,7 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		# we might actually get many different changes for a given object.
 		# that's why we have to get the one we're replacing (if any)
 		# and remove that timestamp from the modified map
-		modified_map = self._containers_modified[change.containerId]
+		modified_map = self._containers_modified[change_containerId]
 
 		if old_change is not None:
 			modified_map.pop( _time_to_64bit_int( old_change.lastModified ), None )
