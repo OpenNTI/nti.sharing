@@ -844,8 +844,8 @@ class SharingTargetMixin(object):
 				stream_container = stream_container[0]
 
 			if hasattr(stream_container,'iter_between'):
-				minAge = minAge if minAge > 0 else None
-				maxAge = before if before > 0 else None
+				minAge = minAge if minAge is not None and minAge > 0 else None
+				maxAge = before if before is not None and before > 0 else None
 				# Once the heap is full, we can start efficiently looking at only the newer
 				# changes (not even loading them from the database), if the container supports it.
 				# We can also do this upon request
@@ -861,7 +861,8 @@ class SharingTargetMixin(object):
 				# heap, no need to look any further
 				try:
 					change_lastModified = change.lastModified
-					if change_lastModified < minAge or (before != -1 and change_lastModified >= before):
+					if ((minAge is not None and change_lastModified < minAge)
+						or (before != -1 and change_lastModified >= before)):
 						continue
 				except KeyError: # POSKeyError
 					logger.warn( "POSKeyError in stream %s", containerId )
