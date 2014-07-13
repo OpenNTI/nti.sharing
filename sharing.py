@@ -1224,6 +1224,8 @@ def SharingSourceMixin_dynamicsharingtargetdeleted( target, event ):
 
 	# This really only matters for IFriendsLists
 	# (ICommunity is the only other IDynamicSharingTarget and they don't get deleted)
+	# XXX: FIXME: No longer true, subclasses of communities can get
+	# deleted, in theory, due to courses
 	if nti_interfaces.IFriendsList.providedBy( target ):
 		for entity in target:
 			record_no_longer_dynamic_member = getattr( entity, 'record_no_longer_dynamic_member', None )
@@ -1352,7 +1354,7 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 			# is called so we hack this and couple it tightly to when we think
 			# we need to use it. See nti.appserver._adapters
 			#ext_shared_with.append( toExternalObject( entity )['Username'] )
-			if nti_interfaces.IDynamicSharingTargetFriendsList.providedBy( entity ):
+			if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy( entity ):
 				username = entity.NTIID
 			elif nti_interfaces.IUser.providedBy( entity ) or nti_interfaces.ICommunity.providedBy( entity ):
 				username = entity.username
