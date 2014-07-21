@@ -23,6 +23,7 @@ from zope.location import locate
 from zope.deprecation import deprecate
 from zope.event import notify as _znotify
 from zope.container.contained import Contained
+from zope.security.interfaces import IPrincipal
 from zope.cachedescriptors.property import Lazy
 
 import persistent
@@ -1356,7 +1357,9 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 			#ext_shared_with.append( toExternalObject( entity )['Username'] )
 			if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy( entity ):
 				username = entity.NTIID
-			elif nti_interfaces.IUser.providedBy( entity ) or nti_interfaces.ICommunity.providedBy( entity ):
+			elif (nti_interfaces.IUser.providedBy( entity )
+				  or nti_interfaces.ICommunity.providedBy( entity )
+				  or IPrincipal.providedBy(entity)):
 				username = entity.username
 			else:
 				# Hmm, what do we have here?
