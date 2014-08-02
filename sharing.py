@@ -107,7 +107,7 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 			self.family = family
 		else:
 			intids = component.queryUtility(zc_intid.IIntIds)
-			if intids is not None:
+			if intids is not None and intids.family != self.family:
 				self.family = intids.family
 
 		# Map from string container ids to self.family.IO.BTree
