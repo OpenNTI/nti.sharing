@@ -1325,7 +1325,10 @@ class AbstractReadableSharedMixin(object):
 		Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
 		is shared.
 		"""
-		return {x.username for x in self.flattenedSharingTargets}
+		return {(x.NTIID
+				 if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy( x )
+				 else x.username)
+				for x in self.flattenedSharingTargets}
 
 	# It would be nice to use CachedProperty here, but it doesn't quite play right with
 	# object-values for dependent keys
