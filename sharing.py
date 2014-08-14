@@ -1132,23 +1132,32 @@ class SharingSourceMixin(SharingTargetMixin):
 		result = [self.streamCache.getContainer( containerId, () )]
 
 		# add everything we follow. If it's a community, we take the
-		# whole thing (ignores are filtered in the parent method). If
-		# it's a person, we take stuff they've shared to communities
-		# we're a member of
+		# whole thing (ignores are filtered in the parent method),
+		# thus getting objects shared only to the community. If it's a
+		# person, we take stuff they've shared to communities we're a
+		# member of
 		context_cache._build_entities_followed_for_read(self)
 		communities_followed = context_cache.communities_followed
-		persons_followed = context_cache.persons_followed
+
 
 		for following in communities_followed:
 				# TODO: Better interface
 			result += following._get_stream_cache_containers( containerId )
 
-		def community_predicate(change):
-			try:
-				return change.creator in persons_followed
-			except KeyError: #POSKeyError
-				return False
+		# For communities we're simply a member of, but not following,
+		# again, pick up stuff shared to the community by people we *are*
+		# following.
 
+		#persons_followed = context_cache.persons_followed
+		#def community_predicate(change):
+		#	try:
+		#		return change.creator in persons_followed
+		#	except KeyError: #POSKeyError
+		#		return False
+
+		# XXX: 20140814: Drop that following restriction for testing...
+		# this lets anything that anyone shares with, e.g., 'Everyone' through...
+		community_predicate = None
 		result.extend( ((comm.streamCache.getContainer(containerId,()),community_predicate)
 						for comm in context_cache(self._get_dynamic_sharing_targets_for_read)) )
 
