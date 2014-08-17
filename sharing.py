@@ -1156,7 +1156,22 @@ class SharingSourceMixin(SharingTargetMixin):
 		#		return False
 
 		# XXX: 20140814: Drop that following restriction for testing...
-		# this lets anything that anyone shares with, e.g., 'Everyone' through...
+		# this lets anything that anyone shares with, e.g., 'Everyone' though...
+		# XXX: 20140816: A bit too broad on shared environments. Try a similar
+		# restriction to what usersearch does and see if we share some non-global community
+		persons_followed = context_cache.persons_followed
+		# This could be more efficient using the context cache, and could also
+		# better handle the global communities...
+		remote_com_names = self.usernames_of_dynamic_memberships - set( ('Everyone',) )
+		def community_predicate(change):
+			try:
+				return change.creator in persons_followed \
+					or not remote_com_names.isdisjoint(change.creator.usernames_of_dynamic_memberships)
+			except KeyError: #POSKeyError
+				return False
+			except AttributeError:
+				False
+
 		community_predicate = None
 		result.extend( ((comm.streamCache.getContainer(containerId,()),community_predicate)
 						for comm in context_cache(self._get_dynamic_sharing_targets_for_read)) )
