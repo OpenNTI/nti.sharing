@@ -1170,9 +1170,8 @@ class SharingSourceMixin(SharingTargetMixin):
 			except KeyError: #POSKeyError
 				return False
 			except AttributeError:
-				False
+				return False
 
-		community_predicate = None
 		result.extend( ((comm.streamCache.getContainer(containerId,()),community_predicate)
 						for comm in context_cache(self._get_dynamic_sharing_targets_for_read)) )
 
