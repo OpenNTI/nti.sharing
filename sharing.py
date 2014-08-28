@@ -296,8 +296,10 @@ def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
 	for wref in container:
 		val = wref()
 		if val is not None:
-			result.add( val.username )
-
+			if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy(val):
+				result.add(val.NTIID)
+			else:
+				result.add(val.username)
 	return result
 
 def _iterable_of_entities_from_named_lazy_set_of_wrefs(self, name):
