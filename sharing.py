@@ -48,12 +48,12 @@ from nti.dataserver.interfaces import StartDynamicMembershipEvent
 
 from nti.externalization.oids import to_external_ntiid_oid
 
-from nti.intid.containers import IntidResolvingIterable
 from nti.intid.containers import IntidContainedStorage
+from nti.intid.containers import IntidResolvingIterable
 
 from nti.utils import sets
 
-from nti.wref import interfaces as wref_interfaces
+from nti.wref.interfaces import IWeakRef
 
 # TODO: This all needs refactored. The different pieces need to be broken into
 # different interfaces and adapters, probably using annotations, to get most
@@ -323,7 +323,7 @@ def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
 			jar.readCurrent( self )
 			container._p_activate()
 			jar.readCurrent( container )
-		wref = wref_interfaces.IWeakRef(entity)
+		wref = IWeakRef(entity)
 		__traceback_info__ = entity, wref
 		assert hasattr(wref, 'username')
 		sets.discard( container, wref )
@@ -633,7 +633,7 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		wref = wref_interfaces.IWeakRef(source)
+		wref = IWeakRef(source)
 		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted', wref )
 		self._entities_accepted.add( wref )
 		return True
@@ -666,7 +666,7 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		wref = wref_interfaces.IWeakRef(source)
+		wref = IWeakRef(source)
 		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_accepted', wref )
 		self._entities_not_accepted.add( wref )
 		return True
@@ -689,7 +689,7 @@ class SharingTargetMixin(object):
 		"""
 		if not source:
 			return False
-		wref = wref_interfaces.IWeakRef(source)
+		wref = IWeakRef(source)
 		for k in ("_entities_accepted", '_entities_not_accepted' ):
 			_remove_entity_from_named_lazy_set_of_wrefs( self, k, wref )
 
@@ -975,7 +975,6 @@ class SharingTargetMixin(object):
 		# the destination user
 		component.handle( self, change )
 
-
 class SharingSourceMixin(SharingTargetMixin):
 	"""
 	Something that can share data. These objects are typically
@@ -1012,7 +1011,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		If ``source`` is actually added, notifies an :class:`.IEntityFollowingEvent`
 		and :class:`.IFollowerAddedEvent`.
 		 """
-		if self._entities_followed.add(wref_interfaces.IWeakRef(source)):
+		if self._entities_followed.add(IWeakRef(source)):
 			_znotify( EntityFollowingEvent( self, source ) )
 			_znotify( FollowerAddedEvent( source, self ) )
 		return True
@@ -1050,7 +1049,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
 		"""
 		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
-		wref = wref_interfaces.IWeakRef(dynamic_sharing_target)
+		wref = IWeakRef(dynamic_sharing_target)
 		__traceback_info__ = dynamic_sharing_target, wref
 		assert hasattr( wref, 'username' )
 		if self._dynamic_memberships.add( wref ): # calls jar.readCurrent; returns whether it actually changed
@@ -1092,7 +1091,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		"""
 		# Checking against the weakref avoids waking up all the objects
 		try:
-			return wref_interfaces.IWeakRef(entity, None) in self._dynamic_memberships
+			return IWeakRef(entity, None) in self._dynamic_memberships
 		except TypeError:
 			return False # "Object has default comparison"
 
@@ -1239,6 +1238,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		return result
 
 import zope.intid.interfaces
+
 @component.adapter(nti_interfaces.IDynamicSharingTarget, zope.intid.interfaces.IIntIdRemovedEvent)
 def SharingSourceMixin_dynamicsharingtargetdeleted( target, event ):
 	"""
@@ -1258,7 +1258,6 @@ def SharingSourceMixin_dynamicsharingtargetdeleted( target, event ):
 			if callable(record_no_longer_dynamic_member):
 				record_no_longer_dynamic_member( target )
 				entity.stop_following( target )
-
 
 class DynamicSharingTargetMixin(SharingTargetMixin):
 	"""
@@ -1396,8 +1395,8 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 			ext_shared_with.append( username )
 		return set(ext_shared_with)
 
-from nti.dataserver.authentication import _dynamic_memberships_that_participate_in_security
 from nti.dataserver.traversal import find_interface
+from nti.dataserver.authentication import _dynamic_memberships_that_participate_in_security
 
 class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin):
 	"""
@@ -1468,9 +1467,9 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 		if isinstance( target, basestring ):
 			raise TypeError('Strings are no longer acceptable', target, self)
 
-		if isinstance( target, collections.Iterable ) \
-			   and not isinstance( target, basestring ) \
-			   and not isinstance( target, DynamicSharingTargetMixin ):
+		if 	isinstance( target, collections.Iterable ) \
+			and not isinstance( target, basestring ) \
+			and not isinstance( target, DynamicSharingTargetMixin ):
 			# TODO: interfaces
 			# expand iterables now
 			for t in target:
@@ -1548,7 +1547,6 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 			if new_targets != orig_targets:
 				_znotify( ObjectSharingModifiedEvent( self, oldSharingTargets=orig_targets ) )
 
-
 	def isSharedDirectlyWith( self, wants ):
 		"""
 		Checks if we are directly shared with `wants`, which must be a
@@ -1573,7 +1571,10 @@ class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModD
 			return set()
 		# Provide a bit of defense against the intids going away or changing
 		# out from under us
-		return set( (x for x in IntidResolvingIterable( self._sharingTargets, allow_missing=True, parent=self, name='sharingTargets' )
+		return set( (x for x in IntidResolvingIterable( self._sharingTargets,
+														allow_missing=True,
+														parent=self,
+														name='sharingTargets' )
 					if x is not None and hasattr( x, 'username') ) )
 
 	def xxx_isReadableByAnyIdOfUser( self, remote_user, ids, family=None ):
