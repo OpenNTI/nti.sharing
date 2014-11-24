@@ -255,6 +255,10 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 			# FIXME: What? There's no wrapping anymore
 			yield self.getContainer( k )
 
+	def iteritems(self):
+		for k in self._containers:
+			yield (k, self.getContainer( k ))
+
 	def keys( self ):
 		return self._containers.keys()
 
