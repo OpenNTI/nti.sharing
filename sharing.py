@@ -3,7 +3,7 @@
 """
 Classes related to managing the sharing process.
 
-$Id$
+.. $Id$
 """
 from __future__ import print_function, unicode_literals, absolute_import, division
 __docformat__ = "restructuredtext en"
@@ -36,6 +36,8 @@ from ZODB.POSException import POSKeyError
 
 from zc import intid as zc_intid
 
+from nti.common import sets
+
 from nti.dataserver import datastructures
 from nti.dataserver.activitystream_change import Change
 from nti.dataserver import interfaces as nti_interfaces
@@ -50,8 +52,6 @@ from nti.externalization.oids import to_external_ntiid_oid
 
 from nti.intid.containers import IntidContainedStorage
 from nti.intid.containers import IntidResolvingIterable
-
-from nti.utils import sets
 
 from nti.wref.interfaces import IWeakRef
 
