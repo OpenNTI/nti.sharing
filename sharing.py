@@ -48,6 +48,8 @@ from nti.dataserver.interfaces import ObjectSharingModifiedEvent
 from nti.dataserver.interfaces import StopDynamicMembershipEvent
 from nti.dataserver.interfaces import StartDynamicMembershipEvent
 
+from nti.dublincore.datastructures import CreatedModDateTrackingObject
+
 from nti.externalization.oids import to_external_ntiid_oid
 
 from nti.intid.containers import IntidContainedStorage
@@ -1440,7 +1442,7 @@ def _ii_family():
 	return BTrees.family64
 
 @interface.implementer(nti_interfaces.IWritableShared)
-class ShareableMixin(AbstractReadableSharedWithMixin, datastructures.CreatedModDateTrackingObject):
+class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObject):
 	""" Represents something that can be shared. It has a set of SharingTargets
 	with which it is shared (permissions) and some flags. Only its creator
 	can alter its sharing targets. It may be possible to copy this object. """
