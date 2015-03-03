@@ -1401,8 +1401,9 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 			ext_shared_with.append( username )
 		return set(ext_shared_with)
 
-from nti.dataserver.traversal import find_interface
 from nti.dataserver.authentication import _dynamic_memberships_that_participate_in_security
+
+from nti.traversal.traversal import find_interface
 
 class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin):
 	"""
