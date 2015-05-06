@@ -1289,6 +1289,7 @@ class AbstractReadableSharedMixin(object):
 	:meth:`_may_have_sharing_targets`)
 
 	"""
+	isPublicIntent = False
 
 	def __init__( self ):
 		super(AbstractReadableSharedMixin,self).__init__()
