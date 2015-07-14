@@ -1398,7 +1398,7 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 				username = to_external_object( entity )['Username']
 
 			ext_shared_with.append( username )
-		return set(ext_shared_with)
+		return set(ext_shared_with) if ext_shared_with else ()
 
 from nti.dataserver.authentication import _dynamic_memberships_that_participate_in_security
 
@@ -1433,7 +1433,6 @@ class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin)
 		# TODO: Using a private function
 		# This returns a generator, the schema says we need a 'UniqueIterable'
 		return _dynamic_memberships_that_participate_in_security( owner, as_principals=False )
-
 
 def _ii_family():
 	intids = component.queryUtility( zc_intid.IIntIds )
