@@ -966,10 +966,11 @@ class SharingTargetMixin(object):
 					self._removeSharedObject( change.object )
 		elif change.type == Change.DELETED:
 			# The weak refs would clear eventually.
-			# For speedy deletion at the expense of scale, we
-			# can force the matter
+			# For speedy deletion at the expense of scale, we can force the matter.
 			removed = self._removeSharedObject( change.object )
-			if removed is False or removed is None and change.is_object_shareable(): # Explicit, not falsey
+			if 		( removed is False or removed is None ) \
+				and change.is_object_shareable(): # Explicit, not falsey
+				# We expected the item in the shared container, but didn't find it.
 				logger.warn( "Incoming deletion (%s) didn't find a shared object in %s", change, self )
 			# Hmm. We also feel like we want to remove the entire thing from the stream
 			# as well, erasing all evidence that it ever
