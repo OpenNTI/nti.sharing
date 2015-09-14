@@ -928,7 +928,6 @@ class SharingTargetMixin(object):
 			is muted.
 		"""
 		accepted = self._addToStream( change )
-
 		if direct and change.is_object_shareable():
 			# TODO: What's the right check here?
 			self._addSharedObject( change.object )
@@ -957,10 +956,9 @@ class SharingTargetMixin(object):
 					# IDs. The container does detect and abort attempts to insert
 					# duplicate keys before the original is removed, so
 					# order matters
-					self._addToStream( change )
-					self._addSharedObject( change.object )
+					self._acceptIncomingChange( change )
 				elif change.object.isSharedIndirectlyWith( self ) or force:
-					self._addToStream( change )
+					self._acceptIncomingChange( change, direct=False )
 				else:
 					# FIXME: Badly linear
 					self._removeSharedObject( change.object )
@@ -1448,7 +1446,7 @@ class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObje
 	can alter its sharing targets. It may be possible to copy this object. """
 
 	# An IITreeSet of entity intids
-	# TODO: FIXME: When the user is deleted and his ID goes bad, we're
+	# FIXME: When the user is deleted and his ID goes bad, we're
 	# not listening for that. What if the ID gets reused for something else?
 	_sharingTargets = None
 
