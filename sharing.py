@@ -956,9 +956,12 @@ class SharingTargetMixin(object):
 					# IDs. The container does detect and abort attempts to insert
 					# duplicate keys before the original is removed, so
 					# order matters
-					self._acceptIncomingChange( change )
+					# Mimic what we do when adding new change.
+					self._addToStream( change )
+					if change.is_object_shareable():
+						self._addSharedObject( change.object )
 				elif change.object.isSharedIndirectlyWith( self ) or force:
-					self._acceptIncomingChange( change, direct=False )
+					self._addToStream( change )
 				else:
 					# FIXME: Badly linear
 					self._removeSharedObject( change.object )
@@ -1348,6 +1351,16 @@ class AbstractReadableSharedMixin(object):
 
 		return result
 
+	def getSharingTargetNames(self):
+		"""
+		Returns  a :class:`set` of :class:`SharingTarget` usernames with whom this item
+		is shared.
+		"""
+		return {(x.NTIID
+				 if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy( x )
+				 else x.username)
+				for x in self.sharingTargets}
+
 	def getFlattenedSharingTargetNames(self):
 		"""
 		Returns a flattened :class:`set` of :class:`SharingTarget` usernames with whom this item
@@ -1361,6 +1374,7 @@ class AbstractReadableSharedMixin(object):
 	# It would be nice to use CachedProperty here, but it doesn't quite play right with
 	# object-values for dependent keys
 	flattenedSharingTargetNames = property(getFlattenedSharingTargetNames)
+	sharingTargetNames = property(getSharingTargetNames)
 
 from nti.externalization.externalization import to_external_object
 class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
