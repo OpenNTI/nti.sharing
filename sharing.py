@@ -148,11 +148,8 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 	# and possibly for deleted objects (there can only be one of these)
 
 	def addContainedObject( self, change ):
-		change_containerId = change.containerId
-		if change_containerId is None:
-			# would raise ValueError: default comparison in btree;
-			# note that an empty CID is ok
-			raise ValueError("Missing container id", change)
+		# We used to raise if None here; should be safe to default to empty string.
+		change_containerId = change.containerId or ''
 		for _containers, factory in ((self._containers_modified, self.family.II.BTree),
 									 (self._containers, self.family.IO.BTree)):
 			self._read_current( _containers )
