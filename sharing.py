@@ -5,6 +5,7 @@ Classes related to managing the sharing process.
 
 .. $Id$
 """
+
 from __future__ import print_function, unicode_literals, absolute_import, division
 __docformat__ = "restructuredtext en"
 
@@ -19,12 +20,18 @@ heapq_heappushpop = heapq.heappushpop
 
 from zope import component
 from zope import interface
-from zope.location import locate
-from zope.deprecation import deprecate
-from zope.event import notify as _znotify
-from zope.container.contained import Contained
-from zope.security.interfaces import IPrincipal
+
 from zope.cachedescriptors.property import Lazy
+
+from zope.container.contained import Contained
+
+from zope.deprecation import deprecate
+
+from zope.location import locate
+
+from zope.event import notify as _znotify
+
+from zope.security.interfaces import IPrincipal
 
 import persistent
 
@@ -38,15 +45,28 @@ from zc import intid as zc_intid
 
 from nti.common import sets
 
-from nti.dataserver import datastructures
 from nti.dataserver.activitystream_change import Change
-from nti.dataserver import interfaces as nti_interfaces
+
+from nti.dataserver.datastructures import LastModifiedCopyingUserList
+from nti.dataserver.datastructures import check_contained_object_for_storage
+
+from nti.dataserver.interfaces import IUser
+from nti.dataserver.interfaces import ICommunity
+from nti.dataserver.interfaces import IFriendsList
+from nti.dataserver.interfaces import IMutedInStream
+from nti.dataserver.interfaces import IWritableShared
+from nti.dataserver.interfaces import IEntityContainer
+from nti.dataserver.interfaces import IDefaultPublished
 from nti.dataserver.interfaces import StopFollowingEvent
 from nti.dataserver.interfaces import FollowerAddedEvent
 from nti.dataserver.interfaces import EntityFollowingEvent
+from nti.dataserver.interfaces import IDynamicSharingTarget
+from nti.dataserver.interfaces import IDeletedObjectPlaceholder
 from nti.dataserver.interfaces import ObjectSharingModifiedEvent
 from nti.dataserver.interfaces import StopDynamicMembershipEvent
 from nti.dataserver.interfaces import StartDynamicMembershipEvent
+from nti.dataserver.interfaces import IUseNTIIDAsExternalUsername
+from nti.dataserver.interfaces import ISharingTargetEntityIterable
 
 from nti.dublincore.datastructures import CreatedModDateTrackingObject
 
@@ -65,7 +85,6 @@ _marker = object()
 def _getId( contained, when_none=_marker ):
 	if contained is None and when_none is not _marker:
 		return when_none
-
 	return component.getUtility( zc_intid.IIntIds ).getId( contained )
 
 class _SharedContainedObjectStorage(IntidContainedStorage):
@@ -79,7 +98,7 @@ class _SharedContainedObjectStorage(IntidContainedStorage):
 	# to override the contained object check
 
 	def _check_contained_object_for_storage( self, contained ):
-		datastructures.check_contained_object_for_storage( contained )
+		check_contained_object_for_storage( contained )
 
 from nti.common.time import time_to_64bit_int as _time_to_64bit_int
 
@@ -132,7 +151,6 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		# TODO: I'm supposed to be storing a Length object separately and maintaing
 		# it for each BTree, as asking for their len() can be expensive
 
-
 	def _read_current( self, container ):
 		try:
 			# it is important to activate the object before we read current on it,
@@ -149,7 +167,7 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 
 	def addContainedObject( self, change ):
 		# We used to raise if None here; should be safe to default to empty string.
-		change_containerId = change.containerId or ''
+		change_containerId = change.containerId or u''
 		for _containers, factory in ((self._containers_modified, self.family.II.BTree),
 									 (self._containers, self.family.IO.BTree)):
 			self._read_current( _containers )
@@ -299,7 +317,7 @@ def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
 	for wref in container:
 		val = wref()
 		if val is not None:
-			if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy(val):
+			if IUseNTIIDAsExternalUsername.providedBy(val):
 				result.add(val.NTIID)
 			else:
 				result.add(val.username)
@@ -350,7 +368,7 @@ class _SharingContextCache(object):
 		self.lastModified = max(self.lastModified,t)
 
 	def make_accumulator(self):
-		self._accumulator = datastructures.LastModifiedCopyingUserList()
+		self._accumulator = LastModifiedCopyingUserList()
 
 	def get_accumulator(self):
 		return self._accumulator
@@ -360,7 +378,7 @@ class _SharingContextCache(object):
 		if accumulator is None:
 			accumulator = self._accumulator
 
-		result = datastructures.LastModifiedCopyingUserList()
+		result = LastModifiedCopyingUserList()
 		# must sort the accumulator, not the change objects;
 		# change objects have arbitrary comparison
 		accumulator.sort( reverse=True ) # Newest first
@@ -387,7 +405,7 @@ class _SharingContextCache(object):
 		persons_followed = self.persons_followed = []
 
 		for following in self(entity._get_entities_followed_for_read):
-			if nti_interfaces.IDynamicSharingTarget.providedBy( following ):
+			if IDynamicSharingTarget.providedBy( following ):
 				communities_followed.append( following )
 			else:
 				persons_followed.append( following )
@@ -585,7 +603,7 @@ class SharingTargetMixin(object):
 
 
 	def is_muted( self, the_object ):
-		if nti_interfaces.IMutedInStream.providedBy( the_object ):
+		if IMutedInStream.providedBy( the_object ):
 			return True
 
 		if the_object is None or '_muted_oids' not in self.__dict__:
@@ -748,7 +766,6 @@ class SharingTargetMixin(object):
 			return True
 		return source in self.entities_ignoring_shared_data_from or (isinstance( source, six.string_types) and source in self.ignoring_shared_data_from)
 
-
 	# TODO: In addition to the actual explicitly shared objects that I've
 	# accepted because I'm not ignoring, we need the "incoming" group
 	# for things I haven't yet accepted but are still shared with me.
@@ -804,7 +821,8 @@ class SharingTargetMixin(object):
 		 """
 		return (self.streamCache.getContainer( containerId, () ),)
 
-	def getContainedStream( self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE, before=-1, context_cache=None, predicate=None ):
+	def getContainedStream(self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE, before=-1,
+						   context_cache=None, predicate=None ):
 		"""
 		Return the most recent items from the stream. Only changes that do not refer to missing or deleted
 		objects are returned. Only changes that were created by extant users are returned.
@@ -833,13 +851,12 @@ class SharingTargetMixin(object):
 		# We maintain this as a heap, with the newest item at the index 0
 		if context_cache.get_accumulator() is None:
 			accumulator = []
-			result = datastructures.LastModifiedCopyingUserList()
+			result = LastModifiedCopyingUserList()
 		else:
 			accumulator = context_cache.get_accumulator()
 			result = None
 
 		stream_containers = self._get_stream_cache_containers( containerId, context_cache=context_cache )
-
 
 		for stream_container in stream_containers:
 			if () == stream_container:
@@ -884,7 +901,7 @@ class SharingTargetMixin(object):
 				change_creator = change.creator
 				if (not change.creator
 					or self.is_ignoring_shared_data_from( change_creator )
-					or nti_interfaces.IDeletedObjectPlaceholder.providedBy( data )
+					or IDeletedObjectPlaceholder.providedBy( data )
 					or self.is_muted(data)):
 					continue
 
@@ -906,7 +923,6 @@ class SharingTargetMixin(object):
 					heapq_heappush( accumulator, heaped )
 				else: # heap full, we may or may not have something newer
 					heapq_heappushpop( accumulator, heaped )
-
 
 		if result is not None and accumulator:
 			# We aren't accumulating for later, and we found data
@@ -931,7 +947,9 @@ class SharingTargetMixin(object):
 		return accepted
 
 	def _noticeChange( self, change, force=False ):
-		""" Should run in a transaction. """
+		""" 
+		Should run in a transaction. 
+		"""
 		# We hope to only get changes for objects shared with us, but
 		# we double check to be sure--force causes us to take incoming
 		# creations/shares anyway. DELETES must always go through, regardless
@@ -1053,7 +1071,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		Records the fact that this object is a member of the given dynamic sharing target.
 		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
 		"""
-		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
+		assert IDynamicSharingTarget.providedBy( dynamic_sharing_target )
 		wref = IWeakRef(dynamic_sharing_target)
 		__traceback_info__ = dynamic_sharing_target, wref
 		assert hasattr( wref, 'username' )
@@ -1067,7 +1085,7 @@ class SharingSourceMixin(SharingTargetMixin):
 
 		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
 		"""
-		assert nti_interfaces.IDynamicSharingTarget.providedBy( dynamic_sharing_target )
+		assert IDynamicSharingTarget.providedBy( dynamic_sharing_target )
 		_remove_entity_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships', dynamic_sharing_target )
 		_znotify(StopDynamicMembershipEvent(self, dynamic_sharing_target))
 
@@ -1188,7 +1206,7 @@ class SharingSourceMixin(SharingTargetMixin):
 			context_cache = _SharingContextCache()
 
 		# start with ours
-		result = datastructures.LastModifiedCopyingUserList()
+		result = LastModifiedCopyingUserList()
 		super_result = super(SharingSourceMixin,self).getSharedContainer( containerId, defaultValue=defaultValue )
 		if super_result is not None and super_result is not defaultValue:
 			result.extend( super_result )
@@ -1215,7 +1233,8 @@ class SharingSourceMixin(SharingTargetMixin):
 						result.updateLastModIfGreater( x.lastModified )
 				except POSKeyError: # pragma: no cover
 					# an object gone missing. This is bad. NOTE: it may be something nested in x
-					logger.warning( "Shared object (%s) missing in '%s' from '%s' to '%s'", type(x), containerId,  following, self )
+					logger.warning(	"Shared object (%s) missing in '%s' from '%s' to '%s'", type(x), 
+									containerId,  following, self )
 
 
 		for comm in context_cache( self._get_dynamic_sharing_targets_for_read ):
@@ -1234,7 +1253,8 @@ class SharingSourceMixin(SharingTargetMixin):
 						result.updateLastModIfGreater( x.lastModified )
 				except POSKeyError: # pragma: no cover
 					# an object gone missing. This is bad. NOTE: it may be something nested in x
-					logger.warning( "Shared object (%s) missing in '%s' dynamically shared from '%s' to '%s'", type(x), containerId, comm, self )
+					logger.warning( "Shared object (%s) missing in '%s' dynamically shared from '%s' to '%s'",
+									type(x), containerId, comm, self )
 
 		# If we made no modifications, return the default
 		# (which would have already been returned by super; possibly it returned other data)
@@ -1242,9 +1262,9 @@ class SharingSourceMixin(SharingTargetMixin):
 			return super_result
 		return result
 
-import zope.intid.interfaces
+from zope.intid.interfaces import IIntIdRemovedEvent
 
-@component.adapter(nti_interfaces.IDynamicSharingTarget, zope.intid.interfaces.IIntIdRemovedEvent)
+@component.adapter(IDynamicSharingTarget, IIntIdRemovedEvent)
 def SharingSourceMixin_dynamicsharingtargetdeleted( target, event ):
 	"""
 	Look for things that people could have dynamic memberships recorded
@@ -1257,7 +1277,7 @@ def SharingSourceMixin_dynamicsharingtargetdeleted( target, event ):
 	# (ICommunity is the only other IDynamicSharingTarget and they don't get deleted)
 	# XXX: FIXME: No longer true, subclasses of communities can get
 	# deleted, in theory, due to courses
-	if nti_interfaces.IFriendsList.providedBy( target ):
+	if IFriendsList.providedBy( target ):
 		for entity in target:
 			record_no_longer_dynamic_member = getattr( entity, 'record_no_longer_dynamic_member', None )
 			if callable(record_no_longer_dynamic_member):
@@ -1321,7 +1341,7 @@ class AbstractReadableSharedMixin(object):
 			return False
 
 		for target in self.sharingTargets:
-			if wants in nti_interfaces.IEntityContainer( target, () ):
+			if wants in IEntityContainer( target, () ):
 				return True
 
 
@@ -1343,7 +1363,7 @@ class AbstractReadableSharedMixin(object):
 		for x in self.sharingTargets:
 			result.add( x ) # always this one
 			# then expand if needed
-			iterable = nti_interfaces.ISharingTargetEntityIterable( x, () )
+			iterable = ISharingTargetEntityIterable( x, () )
 			result.update( iterable )
 
 		return result
@@ -1354,7 +1374,7 @@ class AbstractReadableSharedMixin(object):
 		is shared.
 		"""
 		return {(x.NTIID
-				 if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy( x )
+				 if IUseNTIIDAsExternalUsername.providedBy( x )
 				 else x.username)
 				for x in self.sharingTargets}
 
@@ -1364,7 +1384,7 @@ class AbstractReadableSharedMixin(object):
 		is shared.
 		"""
 		return {(x.NTIID
-				 if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy( x )
+				 if IUseNTIIDAsExternalUsername.providedBy( x )
 				 else x.username)
 				for x in self.flattenedSharingTargets}
 
@@ -1397,10 +1417,10 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 			# is called so we hack this and couple it tightly to when we think
 			# we need to use it. See nti.appserver._adapters
 			#ext_shared_with.append( toExternalObject( entity )['Username'] )
-			if nti_interfaces.IUseNTIIDAsExternalUsername.providedBy( entity ):
+			if IUseNTIIDAsExternalUsername.providedBy( entity ):
 				username = entity.NTIID
-			elif (nti_interfaces.IUser.providedBy( entity )
-				  or nti_interfaces.ICommunity.providedBy( entity )
+			elif (IUser.providedBy( entity )
+				  or ICommunity.providedBy( entity )
 				  or IPrincipal.providedBy(entity)):
 				username = entity.username
 			else:
@@ -1425,11 +1445,11 @@ class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin)
 	"""
 
 	def _may_have_sharing_targets( self ):
-		return nti_interfaces.IDefaultPublished.providedBy( self )
+		return IDefaultPublished.providedBy( self )
 
 	@property
 	def sharingTargets(self):
-		if nti_interfaces.IDefaultPublished.providedBy( self ):
+		if IDefaultPublished.providedBy( self ):
 			return self.sharingTargetsWhenPublished
 		return self._non_published_sharing_targets
 
@@ -1439,7 +1459,7 @@ class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin)
 	def sharingTargetsWhenPublished(self):
 		creator = getattr( self, 'creator', None )
 		# interestingly, IUser does not extend IPrincipal
-		owner = creator if nti_interfaces.IUser.providedBy( creator ) else find_interface( self, nti_interfaces.IUser )
+		owner = creator if IUser.providedBy( creator ) else find_interface(self, IUser)
 		# TODO: Using a private function
 		# This returns a generator, the schema says we need a 'UniqueIterable'
 		return _dynamic_memberships_that_participate_in_security( owner, as_principals=False )
@@ -1450,7 +1470,7 @@ def _ii_family():
 		return intids.family
 	return BTrees.family64
 
-@interface.implementer(nti_interfaces.IWritableShared)
+@interface.implementer(IWritableShared)
 class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObject):
 	""" Represents something that can be shared. It has a set of SharingTargets
 	with which it is shared (permissions) and some flags. Only its creator
