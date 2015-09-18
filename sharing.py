@@ -255,6 +255,7 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		boundary means no limit. This can be used to efficiently combine
 		streams, picking up only newer items.
 		"""
+		containerId = containerId or '' # Bucket into empty if None
 		container = self._containers.get( containerId )
 		if container is None:
 			return defaultValue
@@ -947,8 +948,8 @@ class SharingTargetMixin(object):
 		return accepted
 
 	def _noticeChange( self, change, force=False ):
-		""" 
-		Should run in a transaction. 
+		"""
+		Should run in a transaction.
 		"""
 		# We hope to only get changes for objects shared with us, but
 		# we double check to be sure--force causes us to take incoming
@@ -1233,7 +1234,7 @@ class SharingSourceMixin(SharingTargetMixin):
 						result.updateLastModIfGreater( x.lastModified )
 				except POSKeyError: # pragma: no cover
 					# an object gone missing. This is bad. NOTE: it may be something nested in x
-					logger.warning(	"Shared object (%s) missing in '%s' from '%s' to '%s'", type(x), 
+					logger.warning(	"Shared object (%s) missing in '%s' from '%s' to '%s'", type(x),
 									containerId,  following, self )
 
 
