@@ -225,13 +225,14 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		# running, and we wouldn't get a conflict)
 		self._read_current( self._containers_modified )
 		obj_id = _getId( contained )
-		modified_map = self._containers_modified.get( contained.containerId )
+		containerId = contained.containerId or '' # Bucket into empty if None
+		modified_map = self._containers_modified.get( containerId )
 		if modified_map is not None:
 			self._read_current( modified_map )
 			modified_map.pop( _time_to_64bit_int( contained.lastModified ), None )
 
 		self._read_current( self._containers )
-		container_map = self._containers.get( contained.containerId )
+		container_map = self._containers.get( containerId )
 		if container_map is not None:
 			self._read_current( container_map )
 			if container_map.pop( obj_id, None ) is not None:
