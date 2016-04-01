@@ -27,6 +27,8 @@ from zope.container.contained import Contained
 
 from zope.deprecation import deprecate
 
+from zope.intid.interfaces import IIntIds
+
 from zope.location import locate
 
 from zope.event import notify as _znotify
@@ -39,9 +41,8 @@ import BTrees
 from BTrees.OOBTree import OOTreeSet
 
 from ZODB import loglevels
-from ZODB.POSException import POSKeyError
 
-from zc import intid as zc_intid
+from ZODB.POSException import POSKeyError
 
 from nti.common import sets
 
@@ -82,10 +83,10 @@ from nti.wref.interfaces import IWeakRef
 # of this out of the core object structure, and to make more things possible.
 
 _marker = object()
-def _getId( contained, when_none=_marker ):
+def _getId(contained, when_none=_marker):
 	if contained is None and when_none is not _marker:
 		return when_none
-	return component.getUtility( zc_intid.IIntIds ).getId( contained )
+	return component.getUtility(IIntIds).getId(contained)
 
 class _SharedContainedObjectStorage(IntidContainedStorage):
 	"""
@@ -97,12 +98,12 @@ class _SharedContainedObjectStorage(IntidContainedStorage):
 	# This class exists for backwards compatibilty in pickles, and
 	# to override the contained object check
 
-	def _check_contained_object_for_storage( self, contained ):
-		check_contained_object_for_storage( contained )
+	def _check_contained_object_for_storage(self, contained):
+		check_contained_object_for_storage(contained)
 
 from nti.common.time import time_to_64bit_int as _time_to_64bit_int
 
-class _SharedStreamCache(persistent.Persistent,Contained):
+class _SharedStreamCache(persistent.Persistent, Contained):
 	"""
 	Implements the stream cache for users. Stores activitystream_change.Change
 	objects, which are not IContained and don't fit anywhere in the traversal
@@ -122,12 +123,12 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 	family = BTrees.family64
 	stream_cache_size = 50
 
-	def __init__( self, family=None ):
-		super(_SharedStreamCache,self).__init__()
-		if family is not None: # pragma: no cover
+	def __init__(self, family=None):
+		super(_SharedStreamCache, self).__init__()
+		if family is not None:  # pragma: no cover
 			self.family = family
 		else:
-			intids = component.queryUtility(zc_intid.IIntIds)
+			intids = component.queryUtility(IIntIds)
 			if intids is not None and intids.family != self.family:
 				self.family = intids.family
 
@@ -151,7 +152,7 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		# TODO: I'm supposed to be storing a Length object separately and maintaing
 		# it for each BTree, as asking for their len() can be expensive
 
-	def _read_current( self, container ):
+	def _read_current(self, container):
 		try:
 			# it is important to activate the object before we read current on it,
 			# so that we get a non-zero serial to record in the transaction.
@@ -165,21 +166,21 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 	# We use -1 as values for None. This is common in test cases
 	# and possibly for deleted objects (there can only be one of these)
 
-	def addContainedObject( self, change ):
+	def addContainedObject(self, change):
 		# We used to raise if None here; should be safe to default to empty string.
 		change_containerId = change.containerId or u''
 		for _containers, factory in ((self._containers_modified, self.family.II.BTree),
 									 (self._containers, self.family.IO.BTree)):
-			self._read_current( _containers )
-			container_map = _containers.get( change_containerId )
-			self._read_current( container_map )
+			self._read_current(_containers)
+			container_map = _containers.get(change_containerId)
+			self._read_current(container_map)
 			if container_map is None:
 				container_map = factory()
 				_containers[change_containerId] = container_map
 		# And so at this point, `container_map` is an IOBTree
 
-		obj_id = _getId( change.object, -1 )
-		old_change = container_map.get( obj_id )
+		obj_id = _getId(change.object, -1)
+		old_change = container_map.get(obj_id)
 		container_map[obj_id] = change
 
 		# Now save the modification info.
@@ -190,13 +191,13 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		modified_map = self._containers_modified[change_containerId]
 
 		if old_change is not None:
-			modified_map.pop( _time_to_64bit_int( old_change.lastModified ), None )
+			modified_map.pop(_time_to_64bit_int(old_change.lastModified), None)
 
 		modified_map[_time_to_64bit_int(change.lastModified)] = obj_id
 
 		# If we're too big, start trimming
 		while len(modified_map) > self.stream_cache_size:
-			oldest_id = modified_map.pop( modified_map.minKey() )
+			oldest_id = modified_map.pop(modified_map.minKey())
 			# If this pop fails, we are somehow corrupted, in that our state
 			# doesn't match. It's a relatively minor corruption, however,
 			# (the worst that happens is that the stream cache gets a bit too big) so
@@ -204,49 +205,49 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 			# In the future we may need to rebuild datastructures that exhibit
 			# this problem. their stream may need to be cleared
 			try:
-				container_map.pop( oldest_id )
+				container_map.pop(oldest_id)
 			except KeyError:
-				logger.debug( "Failed to pop oldest object with id %s in %s",
-							  oldest_id, self )
+				logger.debug("Failed to pop oldest object with id %s in %s",
+							  oldest_id, self)
 
 		# Change objects can wind up sent to multiple people in different shards
 		# They need to have an owning shard, otherwise it's not possible to pick
 		# one if they are reachable from multiple. So we add them here
 		# TODO: See comments above about making the user own these
-		if self._p_jar and getattr( change, '_p_jar', self ) is None:
-			self._p_jar.add( change )
+		if self._p_jar and getattr(change, '_p_jar', self) is None:
+			self._p_jar.add(change)
 
 		return change
 
-	def deleteEqualContainedObject( self, contained, log_level=None ):
+	def deleteEqualContainedObject(self, contained, log_level=None):
 		# It is important to ensure we are reading the current, consistent
 		# state of objects, as pop() does not mark the object modified if it
 		# is not found (but some other transaction could have added it while we were
 		# running, and we wouldn't get a conflict)
-		self._read_current( self._containers_modified )
-		obj_id = _getId( contained )
-		containerId = contained.containerId or '' # Bucket into empty if None
-		modified_map = self._containers_modified.get( containerId )
+		self._read_current(self._containers_modified)
+		obj_id = _getId(contained)
+		containerId = contained.containerId or ''  # Bucket into empty if None
+		modified_map = self._containers_modified.get(containerId)
 		if modified_map is not None:
-			self._read_current( modified_map )
-			modified_map.pop( _time_to_64bit_int( contained.lastModified ), None )
+			self._read_current(modified_map)
+			modified_map.pop(_time_to_64bit_int(contained.lastModified), None)
 
-		self._read_current( self._containers )
-		container_map = self._containers.get( containerId )
+		self._read_current(self._containers)
+		container_map = self._containers.get(containerId)
 		if container_map is not None:
-			self._read_current( container_map )
-			if container_map.pop( obj_id, None ) is not None:
+			self._read_current(container_map)
+			if container_map.pop(obj_id, None) is not None:
 				return contained
 
-	def clearContainer( self, containerId ):
-		self._containers.pop( containerId, None )
-		self._containers_modified.pop( containerId, None )
+	def clearContainer(self, containerId):
+		self._containers.pop(containerId, None)
+		self._containers_modified.pop(containerId, None)
 
-	def clear( self ):
+	def clear(self):
 		self._containers.clear()
 		self._containers_modified.clear()
 
-	def getContainer( self, containerId, defaultValue=None ):
+	def getContainer(self, containerId, defaultValue=None):
 		"""
 		Returns something that can iterate across Change objects, or the default value.
 		The returned object also has a ``iter_between`` method that accepts up to two `time.time`
@@ -256,65 +257,65 @@ class _SharedStreamCache(persistent.Persistent,Contained):
 		boundary means no limit. This can be used to efficiently combine
 		streams, picking up only newer items.
 		"""
-		containerId = containerId or '' # Bucket into empty if None
-		container = self._containers.get( containerId )
+		containerId = containerId or ''  # Bucket into empty if None
+		container = self._containers.get(containerId)
 		if container is None:
 			return defaultValue
-		mod_container = self._containers_modified.get( containerId )
-		if mod_container is None: # pragma: no cover
-			logger.warn( "Corruption detected in %s", self )
+		mod_container = self._containers_modified.get(containerId)
+		if mod_container is None:  # pragma: no cover
+			logger.warn("Corruption detected in %s", self)
 			return container.values()
 		# TODO: If needed, we could get a 'Last Modified' value for
 		# this returned object using self._containers_modified
-		return _StreamValuesProxy( container, mod_container )
+		return _StreamValuesProxy(container, mod_container)
 
-	def values( self ):
+	def values(self):
 		# Iter the keys and call getContainer to get wrapping
 		for k in self._containers:
 			# FIXME: What? There's no wrapping anymore
-			yield self.getContainer( k )
+			yield self.getContainer(k)
 
 	def iteritems(self):
 		for k in self._containers:
-			yield (k, self.getContainer( k ))
+			yield (k, self.getContainer(k))
 
-	def keys( self ):
+	def keys(self):
 		return self._containers.keys()
 
-	def __iter__( self ):
+	def __iter__(self):
 		return iter(self._containers)
 
-	def __repr__( self ):
-		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__ )
+	def __repr__(self):
+		return '<%s at %s/%s>' % (self.__class__.__name__, self.__parent__, self.__name__)
 
 class _StreamValuesProxy(object):
 
 	__slots__ = ('_container', '_mod_container')
 
-	def __init__( self, container, mod_container ):
+	def __init__(self, container, mod_container):
 		self._container = container
 		self._mod_container = mod_container
 
-	def __iter__( self ):
+	def __iter__(self):
 		return iter(self._container.values())
 
-	def __len__( self ):
-		return len(self._container) # VERY inefficient
+	def __len__(self):
+		return len(self._container)  # VERY inefficient
 
-	def iter_between( self, min_age, max_age ):
+	def iter_between(self, min_age, max_age):
 		min_time_key = _time_to_64bit_int(min_age) if min_age else None
 		max_time_key = _time_to_64bit_int(max_age) if max_age else None
 		container = self._container
 		for obj_id in self._mod_container.values(min_time_key, max_time_key):
-			change = container.get( obj_id )
+			change = container.get(obj_id)
 			if change is not None:
 				yield change
 
 def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
 	container = ()
-	self._p_activate() # Ensure we have a dict
+	self._p_activate()  # Ensure we have a dict
 	if name in self.__dict__:
-		container = getattr( self, name )
+		container = getattr(self, name)
 	result = set()
 	for wref in container:
 		val = wref()
@@ -327,29 +328,29 @@ def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
 
 def _iterable_of_entities_from_named_lazy_set_of_wrefs(self, name):
 	container = ()
-	self._p_activate() # Ensure we have a dict
+	self._p_activate()  # Ensure we have a dict
 	if name in self.__dict__:
-		container = getattr( self, name )
+		container = getattr(self, name)
 	for wref in container:
 		val = wref()
 		if val is not None:
 			yield val
 
-def _remove_entity_from_named_lazy_set_of_wrefs( self, name, entity ):
-	self._p_activate() # Ensure we have a dict
+def _remove_entity_from_named_lazy_set_of_wrefs(self, name, entity):
+	self._p_activate()  # Ensure we have a dict
 	if name in self.__dict__:
-		jar = getattr( self, '_p_jar', None )
-		container = getattr( self, name )
+		jar = getattr(self, '_p_jar', None)
+		container = getattr(self, name)
 		if jar is not None:
 			# Since we're mutating, probably based on some other object's
 			# content, make sure we're mutating the current version
-			jar.readCurrent( self )
+			jar.readCurrent(self)
 			container._p_activate()
-			jar.readCurrent( container )
+			jar.readCurrent(container)
 		wref = IWeakRef(entity)
 		__traceback_info__ = entity, wref
 		assert hasattr(wref, 'username')
-		sets.discard( container, wref )
+		sets.discard(container, wref)
 
 class _SharingContextCache(object):
 	"""
@@ -358,7 +359,7 @@ class _SharingContextCache(object):
 	Outside of this module, this is an opaque object.
 	"""
 
-	def __init__( self ):
+	def __init__(self):
 		self._data = {}
 		self._dups = set()
 		self._accumulator = None
@@ -366,8 +367,8 @@ class _SharingContextCache(object):
 		self.communities_followed = None
 		self.persons_followed = None
 
-	def updateLastModIfGreater( self, t ):
-		self.lastModified = max(self.lastModified,t)
+	def updateLastModIfGreater(self, t):
+		self.lastModified = max(self.lastModified, t)
 
 	def make_accumulator(self):
 		self._accumulator = LastModifiedCopyingUserList()
@@ -383,21 +384,21 @@ class _SharingContextCache(object):
 		result = LastModifiedCopyingUserList()
 		# must sort the accumulator, not the change objects;
 		# change objects have arbitrary comparison
-		accumulator.sort( reverse=True ) # Newest first
-		result.extend( (x[1] for x in accumulator ) )
+		accumulator.sort(reverse=True)  # Newest first
+		result.extend((x[1] for x in accumulator))
 		if result:
-			result.updateLastModIfGreater( result[0].lastModified )
+			result.updateLastModIfGreater(result[0].lastModified)
 		return result
 
 	# To avoid duplicates, we keep a set of the OIDs/intids of the
 	# objects. We use this rather than the object itself for speed,
 	# (hashing the objects here showed up as a hotspot in profiling)
 	# and to ensure mutual hash/equal works
-	def _has_seen_object( self, obj ):
+	def _has_seen_object(self, obj):
 		return id(obj) in self._dups
 
-	def _note_seen_object( self, obj ):
-		self._dups.add( id(obj) )
+	def _note_seen_object(self, obj):
+		self._dups.add(id(obj))
 
 
 	def _build_entities_followed_for_read(self, entity):
@@ -407,12 +408,12 @@ class _SharingContextCache(object):
 		persons_followed = self.persons_followed = []
 
 		for following in self(entity._get_entities_followed_for_read):
-			if IDynamicSharingTarget.providedBy( following ):
-				communities_followed.append( following )
+			if IDynamicSharingTarget.providedBy(following):
+				communities_followed.append(following)
 			else:
-				persons_followed.append( following )
+				persons_followed.append(following)
 
-	def __call__( self, func ):
+	def __call__(self, func):
 		# makes many assumptions. Func must return an iterable that we
 		# transform into a set
 		key = func.__name__
@@ -464,8 +465,8 @@ class SharingTargetMixin(object):
 
 	MAX_STREAM_SIZE = 50
 
-	def __init__( self, *args, **kwargs ):
-		super(SharingTargetMixin,self).__init__( *args, **kwargs )
+	def __init__(self, *args, **kwargs):
+		super(SharingTargetMixin, self).__init__(*args, **kwargs)
 
 	# Note that @Lazy mutates the __dict__ directly, bypassing
 	# __setattribute__, which means we are responsible for marking
@@ -481,7 +482,7 @@ class SharingTargetMixin(object):
 		cache.stream_cache_size = self.MAX_STREAM_SIZE
 		self._p_changed = True
 		if self._p_jar:
-			self._p_jar.add( cache )
+			self._p_jar.add(cache)
 		locate(cache, self, 'streamCache')
 		return cache
 
@@ -498,7 +499,7 @@ class SharingTargetMixin(object):
 		self._p_changed = True
 		result = _SharedContainedObjectStorage()
 		if self._p_jar:
-			self._p_jar.add( result )
+			self._p_jar.add(result)
 		locate(result, self, 'containersOfShared')
 		return result
 
@@ -511,7 +512,7 @@ class SharingTargetMixin(object):
 		self._p_changed = True
 		result = _SharedContainedObjectStorage()
 		if self._p_jar:
-			self._p_jar.add( result )
+			self._p_jar.add(result)
 		locate(result, self, 'containers_of_muted')
 		return result
 
@@ -519,7 +520,7 @@ class SharingTargetMixin(object):
 		self._p_changed = True
 		result = OOTreeSet()
 		if self._p_jar:
-			self._p_jar.add( result )
+			self._p_jar.add(result)
 		return result
 
 	@Lazy
@@ -547,13 +548,13 @@ class SharingTargetMixin(object):
 		"""
 		return self._lazy_create_ootreeset_for_wref()
 
-	def __manage_mute( self, mute=True ):
+	def __manage_mute(self, mute=True):
 		# TODO: Horribly inefficient
 		if self._p_jar and self.containersOfShared._p_jar:
 			self.containersOfShared._p_activate()
 			self.containers_of_muted._p_activate()
-			self._p_jar.readCurrent( self.containersOfShared )
-			self._p_jar.readCurrent( self.containers_of_muted )
+			self._p_jar.readCurrent(self.containersOfShared)
+			self._p_jar.readCurrent(self.containers_of_muted)
 		_from = self.containersOfShared
 		_to = self.containers_of_muted
 		if not mute:
@@ -563,68 +564,68 @@ class SharingTargetMixin(object):
 		for container in _from.containers.values():
 			for obj in container:
 				if mute:
-					if self.is_muted( obj ):
-						to_move.append( obj )
-				elif not self.is_muted( obj ):
-					to_move.append( obj )
+					if self.is_muted(obj):
+						to_move.append(obj)
+				elif not self.is_muted(obj):
+					to_move.append(obj)
 
 		for x in to_move:
-			_from.deleteEqualContainedObject( x )
-			_to.addContainedObject( x )
+			_from.deleteEqualContainedObject(x)
+			_to.addContainedObject(x)
 
 			if mute:
-				self.streamCache.deleteEqualContainedObject( x )
+				self.streamCache.deleteEqualContainedObject(x)
 
 		# There is the possibility for things to be in the stream
 		# cache that were never in the shared objects (forums)
 		# However, we have to apply muting at read time anyway, so
 		# there's no point going through the containers now
 
-	def mute_conversation( self, root_ntiid_oid ):
+	def mute_conversation(self, root_ntiid_oid):
 		"""
 		:raises TypeError: If `root_ntiid_oid` is ``None``.
 		"""
 		# self._muted_oids would raise TypeError, but no need to
 		# run the lazy creator if not needed
-		if root_ntiid_oid is None: raise TypeError('Object has default comparison') # match BTree message
-		self._muted_oids.add( root_ntiid_oid )
+		if root_ntiid_oid is None: raise TypeError('Object has default comparison')  # match BTree message
+		self._muted_oids.add(root_ntiid_oid)
 
 		# Now move over anything that is muted
-		self.__manage_mute( )
+		self.__manage_mute()
 
 
-	def unmute_conversation( self, root_ntiid_oid ):
+	def unmute_conversation(self, root_ntiid_oid):
 		if '_muted_oids' not in self.__dict__ or root_ntiid_oid is None:
 			# No need to let self._muted_oids raise TypeError if root_ntiid_oid is
 			# None: It could never possibly be muted
 			return
 
-		if sets.discard_p( self._muted_oids, root_ntiid_oid ):
+		if sets.discard_p(self._muted_oids, root_ntiid_oid):
 			# Now unmute anything required
-			self.__manage_mute( mute=False )
+			self.__manage_mute(mute=False)
 
 
-	def is_muted( self, the_object ):
-		if IMutedInStream.providedBy( the_object ):
+	def is_muted(self, the_object):
+		if IMutedInStream.providedBy(the_object):
 			return True
 
 		if the_object is None or '_muted_oids' not in self.__dict__:
 			return False
 
 		try:
-			if (getattr( the_object, 'id', None ) or '') in self._muted_oids:
+			if (getattr(the_object, 'id', None) or '') in self._muted_oids:
 				return True
-		except KeyError: # POSKeyError
+		except KeyError:  # POSKeyError
 			return True
-		ntiid = to_external_ntiid_oid( the_object )
-		#__traceback_info__ = the_object, ntiid
-		if ntiid and ntiid in self._muted_oids: # Raises TypeError if ntiid is None
+		ntiid = to_external_ntiid_oid(the_object)
+		# __traceback_info__ = the_object, ntiid
+		if ntiid and ntiid in self._muted_oids:  # Raises TypeError if ntiid is None
 			return True
-		reply_ntiid = to_external_ntiid_oid( the_object.inReplyTo ) if hasattr( the_object, 'inReplyTo' ) else None
-		#__traceback_info__ += getattr( the_object, 'inReplyTo' ), reply_ntiid
-		if reply_ntiid is not None and reply_ntiid in self._muted_oids: # Raises TypeError if reply_ntiid is None; this could happen
+		reply_ntiid = to_external_ntiid_oid(the_object.inReplyTo) if hasattr(the_object, 'inReplyTo') else None
+		# __traceback_info__ += getattr( the_object, 'inReplyTo' ), reply_ntiid
+		if reply_ntiid is not None and reply_ntiid in self._muted_oids:  # Raises TypeError if reply_ntiid is None; this could happen
 			return True
-		refs_ntiids = [to_external_ntiid_oid(x) for x in the_object.references] if hasattr( the_object, 'references') else ()
+		refs_ntiids = [to_external_ntiid_oid(x) for x in the_object.references] if hasattr(the_object, 'references') else ()
 		for x in refs_ntiids:
 			if x and x in self._muted_oids:
 				return True
@@ -633,13 +634,13 @@ class SharingTargetMixin(object):
 		# to see if one of them is muted.
 		parent = the_object
 		while parent is not None:
-			if (getattr( parent, 'containerId', None ) or '') in self._muted_oids: # be sure to avoid testing None as above
+			if (getattr(parent, 'containerId', None) or '') in self._muted_oids:  # be sure to avoid testing None as above
 				return True
-			parent = getattr( parent, '__parent__', None )
+			parent = getattr(parent, '__parent__', None)
 
 		return False
 
-	def accept_shared_data_from( self, source ):
+	def accept_shared_data_from(self, source):
 		"""
 		Begin accepting shared data from the `source`.
 
@@ -657,30 +658,30 @@ class SharingTargetMixin(object):
 		if not source:
 			return False
 		wref = IWeakRef(source)
-		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted', wref )
-		self._entities_accepted.add( wref )
+		_remove_entity_from_named_lazy_set_of_wrefs(self, '_entities_not_accepted', wref)
+		self._entities_accepted.add(wref)
 		return True
 
-	def stop_accepting_shared_data_from( self, source ):
+	def stop_accepting_shared_data_from(self, source):
 		if not source:
 			return False
-		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_accepted', source )
+		_remove_entity_from_named_lazy_set_of_wrefs(self, '_entities_accepted', source)
 		return True
 
 	@property
-	#@deprecate("Prefer `entities_accepting_shared_data_from`")
-	def accepting_shared_data_from( self ):
+	# @deprecate("Prefer `entities_accepting_shared_data_from`")
+	def accepting_shared_data_from(self):
 		""" :returns: Iterable names of entities we accept shared data from. """
-		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_entities_accepted' )
+		return _set_of_usernames_from_named_lazy_set_of_wrefs(self, '_entities_accepted')
 
 	@property
 	def entities_accepting_shared_data_from(self):
 		"""
 		Return an iterable of entities we accept shared data from.
 		"""
-		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_accepted' )
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs(self, '_entities_accepted')
 
-	def ignore_shared_data_from( self, source ):
+	def ignore_shared_data_from(self, source):
 		"""
 		The opposite of :meth:`accept_shared_data_from`.
 
@@ -690,17 +691,17 @@ class SharingTargetMixin(object):
 		if not source:
 			return False
 		wref = IWeakRef(source)
-		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_accepted', wref )
-		self._entities_not_accepted.add( wref )
+		_remove_entity_from_named_lazy_set_of_wrefs(self, '_entities_accepted', wref)
+		self._entities_not_accepted.add(wref)
 		return True
 
-	def stop_ignoring_shared_data_from( self, source ):
+	def stop_ignoring_shared_data_from(self, source):
 		if not source:
 			return False
-		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted', source )
+		_remove_entity_from_named_lazy_set_of_wrefs(self, '_entities_not_accepted', source)
 		return True
 
-	def reset_shared_data_from( self, source ):
+	def reset_shared_data_from(self, source):
 		"""
 		Stop accepting shared data from the `source`, but also do not ignore it.
 
@@ -713,10 +714,10 @@ class SharingTargetMixin(object):
 		if not source:
 			return False
 		wref = IWeakRef(source)
-		for k in ("_entities_accepted", '_entities_not_accepted' ):
-			_remove_entity_from_named_lazy_set_of_wrefs( self, k, wref )
+		for k in ("_entities_accepted", '_entities_not_accepted'):
+			_remove_entity_from_named_lazy_set_of_wrefs(self, k, wref)
 
-	def reset_all_shared_data( self ):
+	def reset_all_shared_data(self):
 		"""
 		Causes this object to forget all sharing and ignoring settings.
 		"""
@@ -724,14 +725,14 @@ class SharingTargetMixin(object):
 		self.reset_ignored_shared_data()
 		self.reset_accepted_shared_data()
 
-	def reset_ignored_shared_data( self ):
+	def reset_ignored_shared_data(self):
 		"""
 		Causes this object to forget all ignored settings.
 		"""
 		if '_entities_not_accepted' in self.__dict__:
 			self._entities_not_accepted.clear()
 
-	def reset_accepted_shared_data( self ):
+	def reset_accepted_shared_data(self):
 		"""
 		Causes this object to forget all accepted users.
 		"""
@@ -739,19 +740,19 @@ class SharingTargetMixin(object):
 			self._entities_accepted.clear()
 
 	@property
-	#@deprecate("Prefer `entities_ignoring_shared_data_from`")
-	def ignoring_shared_data_from( self ):
+	# @deprecate("Prefer `entities_ignoring_shared_data_from`")
+	def ignoring_shared_data_from(self):
 		""" :returns: Iterable of names of entities we are specifically ignoring shared data from. """
-		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted' )
+		return _set_of_usernames_from_named_lazy_set_of_wrefs(self, '_entities_not_accepted')
 
 	@property
-	def entities_ignoring_shared_data_from( self ):
+	def entities_ignoring_shared_data_from(self):
 		"""
 		Returns an iterable of entities we are specifically ignoring shared data from.
 		"""
-		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_not_accepted' )
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs(self, '_entities_not_accepted')
 
-	def is_accepting_shared_data_from( self, source ):
+	def is_accepting_shared_data_from(self, source):
 		"""
 		Return if this object is accepting data that is explicitly
 		shared with it by `source`.
@@ -759,72 +760,72 @@ class SharingTargetMixin(object):
 		# The string path is deprecated
 		return source in self.entities_accepting_shared_data_from or (isinstance(source, six.string_types) and source in self.accepting_shared_data_from)
 
-	def is_ignoring_shared_data_from( self, source ):
+	def is_ignoring_shared_data_from(self, source):
 		"""
 		The opposite of :meth:`is_accepting_shared_data_from`
 		"""
 		# Naturally we ignore ourself
 		if source is self or self.username == source:
 			return True
-		return source in self.entities_ignoring_shared_data_from or (isinstance( source, six.string_types) and source in self.ignoring_shared_data_from)
+		return source in self.entities_ignoring_shared_data_from or (isinstance(source, six.string_types) and source in self.ignoring_shared_data_from)
 
 	# TODO: In addition to the actual explicitly shared objects that I've
 	# accepted because I'm not ignoring, we need the "incoming" group
 	# for things I haven't yet accepted but are still shared with me.
-	def getSharedContainer( self, containerId, defaultValue=(), context_cache=None ):
+	def getSharedContainer(self, containerId, defaultValue=(), context_cache=None):
 		"""
 		Get the shared container.
 
 		:return: If the containerId is found, an iterable of callable objects (weak refs);
 			calling the objects will either return the actual shared object, or None.
 		"""
-		result = self.containersOfShared.getContainer( containerId, defaultValue )
+		result = self.containersOfShared.getContainer(containerId, defaultValue)
 		return result
 
-	def _addSharedObject( self, contained ):
+	def _addSharedObject(self, contained):
 		containers = self.containers_of_muted if self.is_muted(contained) else self.containersOfShared
-		containers.addContainedObject( contained )
+		containers.addContainedObject(contained)
 
-	def _removeSharedObject( self, contained ):
+	def _removeSharedObject(self, contained):
 		"""
 		:return: The removed object, or None if nothing was removed.
 		"""
 		# Remove from both muted and normal, just in case
 		result = False
-		for containers in (self.containersOfShared,self.containers_of_muted):
+		for containers in (self.containersOfShared, self.containers_of_muted):
 			# Drop the logging to TRACE because at least one of these will be missing.
 			# We may get a ContainedObjectValueError if the object was not even sharable to begin with
 			try:
-				result = containers.deleteEqualContainedObject( contained, log_level=loglevels.TRACE ) or result
+				result = containers.deleteEqualContainedObject(contained, log_level=loglevels.TRACE) or result
 			except ValueError:
 				pass
 		return result
 
-	def _addToStream( self, change ):
+	def _addToStream(self, change):
 		"""
 		:return: A boolean indicating whether the change was accepted
 		or muted.
 		"""
 		__traceback_info__ = self
-		if self.is_muted( change.object ):
+		if self.is_muted(change.object):
 			return False
 
-		self.streamCache.addContainedObject( change )
+		self.streamCache.addContainedObject(change)
 		return True
 
-	def _removeFromStream( self, change ):
-		self.streamCache.deleteEqualContainedObject( change.object )
+	def _removeFromStream(self, change):
+		self.streamCache.deleteEqualContainedObject(change.object)
 
-	def _get_stream_cache_containers( self, containerId, context_cache=None ):
+	def _get_stream_cache_containers(self, containerId, context_cache=None):
 		"""
 		 Return a sequence of stream cache containers for the id.
 		 An item can optionally be a tuple of the container and an extra predicate to
 		 apply to items in that container.
 		 """
-		return (self.streamCache.getContainer( containerId, () ),)
+		return (self.streamCache.getContainer(containerId, ()),)
 
 	def getContainedStream(self, containerId, minAge=-1, maxCount=MAX_STREAM_SIZE, before=-1,
-						   context_cache=None, predicate=None ):
+						   context_cache=None, predicate=None):
 		"""
 		Return the most recent items from the stream. Only changes that do not refer to missing or deleted
 		objects are returned. Only changes that were created by extant users are returned.
@@ -849,7 +850,7 @@ class SharingTargetMixin(object):
 		# moment, we are actually merging all this activity together, regardless of source
 		# TODO: These data structures could and should be optimized for this.
 
-		#result = context_cache._accumulator if context_cache._accumulator is not None else
+		# result = context_cache._accumulator if context_cache._accumulator is not None else
 		# We maintain this as a heap, with the newest item at the index 0
 		if context_cache.get_accumulator() is None:
 			accumulator = []
@@ -858,7 +859,7 @@ class SharingTargetMixin(object):
 			accumulator = context_cache.get_accumulator()
 			result = None
 
-		stream_containers = self._get_stream_cache_containers( containerId, context_cache=context_cache )
+		stream_containers = self._get_stream_cache_containers(containerId, context_cache=context_cache)
 
 		for stream_container in stream_containers:
 			if () == stream_container:
@@ -868,7 +869,7 @@ class SharingTargetMixin(object):
 				_container_predicate = stream_container[1]
 				stream_container = stream_container[0]
 
-			if hasattr(stream_container,'iter_between'):
+			if hasattr(stream_container, 'iter_between'):
 				minAge = minAge if minAge is not None and minAge > 0 else None
 				maxAge = before if before is not None and before > 0 else None
 				# Once the heap is full, we can start efficiently looking at only the newer
@@ -889,8 +890,8 @@ class SharingTargetMixin(object):
 					if ((minAge is not None and change_lastModified < minAge)
 						or (before != -1 and change_lastModified >= before)):
 						continue
-				except KeyError: # POSKeyError
-					logger.warn( "POSKeyError in stream %s", containerId )
+				except KeyError:  # POSKeyError
+					logger.warn("POSKeyError in stream %s", containerId)
 					continue
 
 				if len(accumulator) == maxCount and change_lastModified <= accumulator[0][0]:
@@ -902,8 +903,8 @@ class SharingTargetMixin(object):
 
 				change_creator = change.creator
 				if (not change.creator
-					or self.is_ignoring_shared_data_from( change_creator )
-					or IDeletedObjectPlaceholder.providedBy( data )
+					or self.is_ignoring_shared_data_from(change_creator)
+					or IDeletedObjectPlaceholder.providedBy(data)
 					or self.is_muted(data)):
 					continue
 
@@ -916,23 +917,23 @@ class SharingTargetMixin(object):
 
 				# Yay, we got one
 				context_cache._note_seen_object(data)
-				context_cache.updateLastModIfGreater( change_lastModified )
+				context_cache.updateLastModIfGreater(change_lastModified)
 
 				heaped = (change_lastModified, change)
-				if not accumulator: # starting out
-					accumulator.append( heaped )
-				elif len(accumulator) < maxCount: # growing the heap
-					heapq_heappush( accumulator, heaped )
-				else: # heap full, we may or may not have something newer
-					heapq_heappushpop( accumulator, heaped )
+				if not accumulator:  # starting out
+					accumulator.append(heaped)
+				elif len(accumulator) < maxCount:  # growing the heap
+					heapq_heappush(accumulator, heaped)
+				else:  # heap full, we may or may not have something newer
+					heapq_heappushpop(accumulator, heaped)
 
 		if result is not None and accumulator:
 			# We aren't accumulating for later, and we found data
 			# Put them in newest first
-			result = context_cache.to_result( accumulator )
+			result = context_cache.to_result(accumulator)
 		return result
 
-	def _acceptIncomingChange( self, change, direct=True ):
+	def _acceptIncomingChange(self, change, direct=True):
 		"""
 		:keyword bool direct: If ``True`` (the default) then this change
 			is directly targeted toward this object. If false, then the change
@@ -942,13 +943,13 @@ class SharingTargetMixin(object):
 		:return: A value indicating if the change was actually accepted or
 			is muted.
 		"""
-		accepted = self._addToStream( change )
+		accepted = self._addToStream(change)
 		if direct and change.is_object_shareable():
 			# TODO: What's the right check here?
-			self._addSharedObject( change.object )
+			self._addSharedObject(change.object)
 		return accepted
 
-	def _noticeChange( self, change, force=False ):
+	def _noticeChange(self, change, force=False):
 		"""
 		Should run in a transaction.
 		"""
@@ -956,15 +957,15 @@ class SharingTargetMixin(object):
 		# we double check to be sure--force causes us to take incoming
 		# creations/shares anyway. DELETES must always go through, regardless
 
-		if change.type in (Change.CREATED,Change.SHARED):
-			if change.object is not None and self.is_accepting_shared_data_from( change.creator ):
-				if change.object.isSharedDirectlyWith( self ):
-					self._acceptIncomingChange( change )
-				elif change.object.isSharedIndirectlyWith( self ) or force:
-					self._acceptIncomingChange( change, direct=False )
+		if change.type in (Change.CREATED, Change.SHARED):
+			if change.object is not None and self.is_accepting_shared_data_from(change.creator):
+				if change.object.isSharedDirectlyWith(self):
+					self._acceptIncomingChange(change)
+				elif change.object.isSharedIndirectlyWith(self) or force:
+					self._acceptIncomingChange(change, direct=False)
 		elif change.type == Change.MODIFIED:
 			if change.object is not None:
-				if change.object.isSharedDirectlyWith( self ):
+				if change.object.isSharedDirectlyWith(self):
 					# NOTE: Each change is going into the stream
 					# leading to the possibility of multiple of the same objects
 					# in the stream.
@@ -974,31 +975,31 @@ class SharingTargetMixin(object):
 					# duplicate keys before the original is removed, so
 					# order matters
 					# Mimic what we do when adding new change.
-					self._addToStream( change )
+					self._addToStream(change)
 					if change.is_object_shareable():
-						self._addSharedObject( change.object )
-				elif change.object.isSharedIndirectlyWith( self ) or force:
-					self._addToStream( change )
+						self._addSharedObject(change.object)
+				elif change.object.isSharedIndirectlyWith(self) or force:
+					self._addToStream(change)
 				else:
 					# FIXME: Badly linear
-					self._removeSharedObject( change.object )
+					self._removeSharedObject(change.object)
 		elif change.type == Change.DELETED:
 			# The weak refs would clear eventually.
 			# For speedy deletion at the expense of scale, we can force the matter.
-			removed = self._removeSharedObject( change.object )
-			if 		( removed is False or removed is None ) \
-				and change.is_object_shareable(): # Explicit, not falsey
+			removed = self._removeSharedObject(change.object)
+			if 		(removed is False or removed is None) \
+				and change.is_object_shareable():  # Explicit, not falsey
 				# We expected the item in the shared container, but didn't find it.
-				logger.warn( "Incoming deletion (%s) didn't find a shared object in %s", change, self )
+				logger.warn("Incoming deletion (%s) didn't find a shared object in %s", change, self)
 			# Hmm. We also feel like we want to remove the entire thing from the stream
 			# as well, erasing all evidence that it ever
 			# existed
-			self._removeFromStream( change )
+			self._removeFromStream(change)
 		elif change.type == Change.CIRCLED:
-			self._acceptIncomingChange( change )
+			self._acceptIncomingChange(change)
 		# Do a dual-dispatch to notify complex subscribers that need to know
 		# the destination user
-		component.handle( self, change )
+		component.handle(self, change)
 
 class SharingSourceMixin(SharingTargetMixin):
 	"""
@@ -1006,8 +1007,8 @@ class SharingSourceMixin(SharingTargetMixin):
 	"active."
 	"""
 
-	def __init__( self, *args, **kwargs ):
-		super(SharingSourceMixin,self).__init__( *args, **kwargs )
+	def __init__(self, *args, **kwargs):
+		super(SharingSourceMixin, self).__init__(*args, **kwargs)
 
 	@Lazy
 	def _entities_followed(self):
@@ -1029,7 +1030,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		"""
 		return self._lazy_create_ootreeset_for_wref()
 
-	def follow( self, source ):
+	def follow(self, source):
 		"""
 		Adds ``source`` to the list of followers.
 
@@ -1037,58 +1038,58 @@ class SharingSourceMixin(SharingTargetMixin):
 		and :class:`.IFollowerAddedEvent`.
 		 """
 		if self._entities_followed.add(IWeakRef(source)):
-			_znotify( EntityFollowingEvent( self, source ) )
-			_znotify( FollowerAddedEvent( source, self ) )
+			_znotify(EntityFollowingEvent(self, source))
+			_znotify(FollowerAddedEvent(source, self))
 		return True
 
-	def stop_following( self, source ):
+	def stop_following(self, source):
 		"""
 		Ensures that `source` is no longer in the list of followers.
 		"""
-		_remove_entity_from_named_lazy_set_of_wrefs( self, '_entities_followed', source )
+		_remove_entity_from_named_lazy_set_of_wrefs(self, '_entities_followed', source)
 		_znotify(StopFollowingEvent(self, source))
 
 	@property
 	@deprecate("Prefer `entities_followed`")
 	def following(self):
 		""" :returns: Iterable names of entities we are following. """
-		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_entities_followed' )
+		return _set_of_usernames_from_named_lazy_set_of_wrefs(self, '_entities_followed')
 
 	@property
 	def entities_followed(self):
 		"""
 		Iterable of entities we are following.
 		"""
-		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_followed' )
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs(self, '_entities_followed')
 
 	@deprecate("Prefer the `record_dynamic_membership` method.")
-	def join_community( self, community ):
+	def join_community(self, community):
 		""" Marks this object as a member of `community.` Does not follow `community`.
 		:returns: Whether we are now a member of the community. """
-		self.record_dynamic_membership( community )
+		self.record_dynamic_membership(community)
 		return True
 
-	def record_dynamic_membership(self, dynamic_sharing_target ):
+	def record_dynamic_membership(self, dynamic_sharing_target):
 		"""
 		Records the fact that this object is a member of the given dynamic sharing target.
 		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
 		"""
-		assert IDynamicSharingTarget.providedBy( dynamic_sharing_target )
+		assert IDynamicSharingTarget.providedBy(dynamic_sharing_target)
 		wref = IWeakRef(dynamic_sharing_target)
 		__traceback_info__ = dynamic_sharing_target, wref
-		assert hasattr( wref, 'username' )
-		if self._dynamic_memberships.add( wref ): # calls jar.readCurrent; returns whether it actually changed
+		assert hasattr(wref, 'username')
+		if self._dynamic_memberships.add(wref):  # calls jar.readCurrent; returns whether it actually changed
 			_znotify(StartDynamicMembershipEvent(self, dynamic_sharing_target))
 
-	def record_no_longer_dynamic_member( self, dynamic_sharing_target ):
+	def record_no_longer_dynamic_member(self, dynamic_sharing_target):
 		"""
 		Records the fact that this object is no longer a member of the given
 		dynamic sharing target.
 
 		:param dynamic_sharing_target: The target. Must implement :class:`nti_interfaces.IDynamicSharingTarget`.
 		"""
-		assert IDynamicSharingTarget.providedBy( dynamic_sharing_target )
-		_remove_entity_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships', dynamic_sharing_target )
+		assert IDynamicSharingTarget.providedBy(dynamic_sharing_target)
+		_remove_entity_from_named_lazy_set_of_wrefs(self, '_dynamic_memberships', dynamic_sharing_target)
 		_znotify(StopDynamicMembershipEvent(self, dynamic_sharing_target))
 
 	@property
@@ -1101,12 +1102,12 @@ class SharingSourceMixin(SharingTargetMixin):
 		"""
 		An iterable of :class:`nti_interfaces.IDynamicSharingTarget` that we are members of.
 		"""
-		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs(self, '_dynamic_memberships')
 
 	@property
-	def usernames_of_dynamic_memberships( self ):
+	def usernames_of_dynamic_memberships(self):
 		""" :returns: Iterable names of dynamic sharing targets we belong to. """
-		return _set_of_usernames_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
+		return _set_of_usernames_from_named_lazy_set_of_wrefs(self, '_dynamic_memberships')
 
 	def is_dynamic_member_of(self, entity):
 		"""
@@ -1118,7 +1119,7 @@ class SharingSourceMixin(SharingTargetMixin):
 		try:
 			return IWeakRef(entity, None) in self._dynamic_memberships
 		except TypeError:
-			return False # "Object has default comparison"
+			return False  # "Object has default comparison"
 
 	def _xxx_extra_intids_of_memberships(self):
 		"""
@@ -1127,35 +1128,35 @@ class SharingSourceMixin(SharingTargetMixin):
 		"""
 
 	@property
-	def xxx_intids_of_memberships_and_self( self ):
+	def xxx_intids_of_memberships_and_self(self):
 		"""
 		A shortcut usable with :meth:`ShareableMixin.xxx_isSharedWithAnyId`.
 
 		:returns: A TreeSet.
 		"""
 
-		intids = component.getUtility( zc_intid.IIntIds )
+		intids = component.getUtility(IIntIds)
 		family = intids.family
 
 		result = family.II.TreeSet()
-		result.add( intids.getId( self ) )
-		result.update( (intids.getId(x) for x in self.dynamic_memberships) )
-		result.update( self._xxx_extra_intids_of_memberships() )
+		result.add(intids.getId(self))
+		result.update((intids.getId(x) for x in self.dynamic_memberships))
+		result.update(self._xxx_extra_intids_of_memberships())
 
 		return result
 
-	def _get_dynamic_sharing_targets_for_read( self ):
-		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_dynamic_memberships' )
+	def _get_dynamic_sharing_targets_for_read(self):
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs(self, '_dynamic_memberships')
 
-	def _get_entities_followed_for_read( self ):
-		return _iterable_of_entities_from_named_lazy_set_of_wrefs( self, '_entities_followed' )
+	def _get_entities_followed_for_read(self):
+		return _iterable_of_entities_from_named_lazy_set_of_wrefs(self, '_entities_followed')
 
-	def _get_stream_cache_containers( self, containerId, context_cache=None ):
+	def _get_stream_cache_containers(self, containerId, context_cache=None):
 		if context_cache is None:
 			context_cache = _SharingContextCache()
 		# start with ours. This ensures things targeted toward us
 		# have the highest chance of making it in the cap if we go in order.
-		result = [self.streamCache.getContainer( containerId, () )]
+		result = [self.streamCache.getContainer(containerId, ())]
 
 		# add everything we follow. If it's a community, we take the
 		# whole thing (ignores are filtered in the parent method),
@@ -1168,18 +1169,18 @@ class SharingSourceMixin(SharingTargetMixin):
 
 		for following in communities_followed:
 				# TODO: Better interface
-			result += following._get_stream_cache_containers( containerId )
+			result += following._get_stream_cache_containers(containerId)
 
 		# For communities we're simply a member of, but not following,
 		# again, pick up stuff shared to the community by people we *are*
 		# following.
 
-		#persons_followed = context_cache.persons_followed
-		#def community_predicate(change):
-		#	try:
-		#		return change.creator in persons_followed
-		#	except KeyError: #POSKeyError
-		#		return False
+		# persons_followed = context_cache.persons_followed
+		# def community_predicate(change):
+		# 	try:
+		# 		return change.creator in persons_followed
+		# 	except KeyError: #POSKeyError
+		# 		return False
 
 		# XXX: 20140814: Drop that following restriction for testing...
 		# this lets anything that anyone shares with, e.g., 'Everyone' though...
@@ -1188,30 +1189,30 @@ class SharingSourceMixin(SharingTargetMixin):
 		persons_followed = context_cache.persons_followed
 		# This could be more efficient using the context cache, and could also
 		# better handle the global communities...
-		remote_com_names = self.usernames_of_dynamic_memberships - set( ('Everyone',) )
+		remote_com_names = self.usernames_of_dynamic_memberships - set(('Everyone',))
 		def community_predicate(change):
 			try:
 				return change.creator in persons_followed \
 					or not remote_com_names.isdisjoint(change.creator.usernames_of_dynamic_memberships)
-			except KeyError: #POSKeyError
+			except KeyError:  # POSKeyError
 				return False
 			except AttributeError:
 				return False
 
-		result.extend( ((comm.streamCache.getContainer(containerId,()),community_predicate)
-						for comm in context_cache(self._get_dynamic_sharing_targets_for_read)) )
+		result.extend(((comm.streamCache.getContainer(containerId, ()), community_predicate)
+						for comm in context_cache(self._get_dynamic_sharing_targets_for_read)))
 
 		return result
 
-	def getSharedContainer( self, containerId, defaultValue=(), context_cache=None ):
+	def getSharedContainer(self, containerId, defaultValue=(), context_cache=None):
 		if context_cache is None:
 			context_cache = _SharingContextCache()
 
 		# start with ours
 		result = LastModifiedCopyingUserList()
-		super_result = super(SharingSourceMixin,self).getSharedContainer( containerId, defaultValue=defaultValue )
+		super_result = super(SharingSourceMixin, self).getSharedContainer(containerId, defaultValue=defaultValue)
 		if super_result is not None and super_result is not defaultValue:
-			result.extend( super_result )
+			result.extend(super_result)
 
 		# add everything we follow. If it's a community, we take the whole
 		# thing (minus ignores). If it's a person, we take stuff they've shared to
@@ -1228,21 +1229,21 @@ class SharingSourceMixin(SharingTargetMixin):
 			__traceback_info__ = following
 			if following == self:
 				continue
-			for x in following.getSharedContainer( containerId ):
+			for x in following.getSharedContainer(containerId):
 				try:
-					if x is not None and not self.is_ignoring_shared_data_from( x.creator ):
-						result.append( x )
-						result.updateLastModIfGreater( x.lastModified )
-				except POSKeyError: # pragma: no cover
+					if x is not None and not self.is_ignoring_shared_data_from(x.creator):
+						result.append(x)
+						result.updateLastModIfGreater(x.lastModified)
+				except POSKeyError:  # pragma: no cover
 					# an object gone missing. This is bad. NOTE: it may be something nested in x
-					logger.warning(	"Shared object (%s) missing in '%s' from '%s' to '%s'", type(x),
-									containerId,  following, self )
+					logger.warning("Shared object (%s) missing in '%s' from '%s' to '%s'", type(x),
+									containerId, following, self)
 
 
-		for comm in context_cache( self._get_dynamic_sharing_targets_for_read ):
+		for comm in context_cache(self._get_dynamic_sharing_targets_for_read):
 			if comm in communities_seen:
 				continue
-			for x in comm.getSharedContainer( containerId ):
+			for x in comm.getSharedContainer(containerId):
 				try:
 					# Communities differ in that we only add things from people we are explicitly
 					# following (unless we are following the entire community; that's handled above)
@@ -1251,12 +1252,12 @@ class SharingSourceMixin(SharingTargetMixin):
 					# we are always implicitly following ourself, so they get added to
 					# XXX This is weird and wrong
 					if x is not None and (x.creator in persons_following or x.creator is self):
-						result.append( x )
-						result.updateLastModIfGreater( x.lastModified )
-				except POSKeyError: # pragma: no cover
+						result.append(x)
+						result.updateLastModIfGreater(x.lastModified)
+				except POSKeyError:  # pragma: no cover
 					# an object gone missing. This is bad. NOTE: it may be something nested in x
-					logger.warning( "Shared object (%s) missing in '%s' dynamically shared from '%s' to '%s'",
-									type(x), containerId, comm, self )
+					logger.warning("Shared object (%s) missing in '%s' dynamically shared from '%s' to '%s'",
+									type(x), containerId, comm, self)
 
 		# If we made no modifications, return the default
 		# (which would have already been returned by super; possibly it returned other data)
@@ -1267,7 +1268,7 @@ class SharingSourceMixin(SharingTargetMixin):
 from zope.intid.interfaces import IIntIdRemovedEvent
 
 @component.adapter(IDynamicSharingTarget, IIntIdRemovedEvent)
-def SharingSourceMixin_dynamicsharingtargetdeleted( target, event ):
+def SharingSourceMixin_dynamicsharingtargetdeleted(target, event):
 	"""
 	Look for things that people could have dynamic memberships recorded
 	with, and clear them when deleted.
@@ -1279,12 +1280,12 @@ def SharingSourceMixin_dynamicsharingtargetdeleted( target, event ):
 	# (ICommunity is the only other IDynamicSharingTarget and they don't get deleted)
 	# XXX: FIXME: No longer true, subclasses of communities can get
 	# deleted, in theory, due to courses
-	if IFriendsList.providedBy( target ):
+	if IFriendsList.providedBy(target):
 		for entity in target:
-			record_no_longer_dynamic_member = getattr( entity, 'record_no_longer_dynamic_member', None )
+			record_no_longer_dynamic_member = getattr(entity, 'record_no_longer_dynamic_member', None)
 			if callable(record_no_longer_dynamic_member):
-				record_no_longer_dynamic_member( target )
-				entity.stop_following( target )
+				record_no_longer_dynamic_member(target)
+				entity.stop_following(target)
 
 class DynamicSharingTargetMixin(SharingTargetMixin):
 	"""
@@ -1300,7 +1301,7 @@ class DynamicSharingTargetMixin(SharingTargetMixin):
 	MAX_STREAM_SIZE = 100000
 	# Turns out we need to maintain both the stream and the objects.
 	def __init__(self, *args, **kwargs):
-		super(DynamicSharingTargetMixin,self).__init__( *args, **kwargs )
+		super(DynamicSharingTargetMixin, self).__init__(*args, **kwargs)
 
 class AbstractReadableSharedMixin(object):
 	"""
@@ -1310,23 +1311,23 @@ class AbstractReadableSharedMixin(object):
 	:meth:`_may_have_sharing_targets`)
 
 	"""
-	def __init__( self ):
-		super(AbstractReadableSharedMixin,self).__init__()
+	def __init__(self):
+		super(AbstractReadableSharedMixin, self).__init__()
 
-	def _may_have_sharing_targets( self ):
+	def _may_have_sharing_targets(self):
 		"""
 		Called in the implementation of the public query methods to aid efficiency. If this
 		returns false, then some algorithms may be short-circuited.
 		"""
 
-		return  hasattr( self, 'sharingTargets' ) # always assume the worst, so long as the property exists
+		return  hasattr(self, 'sharingTargets')  # always assume the worst, so long as the property exists
 
-	def isSharedDirectlyWith( self, wants ):
+	def isSharedDirectlyWith(self, wants):
 		"""
 		Checks if we are directly shared with `wants`, which must be a
 		Principal.
 		"""
-		if not self._may_have_sharing_targets( ):
+		if not self._may_have_sharing_targets():
 			return False
 
 		try:
@@ -1334,7 +1335,7 @@ class AbstractReadableSharedMixin(object):
 		except KeyError:
 			pass
 
-	def isSharedIndirectlyWith( self, wants ):
+	def isSharedIndirectlyWith(self, wants):
 		"""
 		Checks if we are indirectly shared with `wants` (a Principal).
 		"""
@@ -1343,18 +1344,18 @@ class AbstractReadableSharedMixin(object):
 			return False
 
 		for target in self.sharingTargets:
-			if wants in IEntityContainer( target, () ):
+			if wants in IEntityContainer(target, ()):
 				return True
 
 
-	def isSharedWith( self, wants ):
+	def isSharedWith(self, wants):
 		"""
 		Checks if we are directly or indirectly shared with `wants` (a principal)
 		"""
-		return self.isSharedDirectlyWith( wants ) or self.isSharedIndirectlyWith( wants )
+		return self.isSharedDirectlyWith(wants) or self.isSharedIndirectlyWith(wants)
 
 	@property
-	def flattenedSharingTargets( self ):
+	def flattenedSharingTargets(self):
 		"""
 		A flattened :class:`set` of entities with whom this item is shared.
 		"""
@@ -1363,10 +1364,10 @@ class AbstractReadableSharedMixin(object):
 
 		result = set()
 		for x in self.sharingTargets:
-			result.add( x ) # always this one
+			result.add(x)  # always this one
 			# then expand if needed
-			iterable = ISharingTargetEntityIterable( x, () )
-			result.update( iterable )
+			iterable = ISharingTargetEntityIterable(x, ())
+			result.update(iterable)
 
 		return result
 
@@ -1376,7 +1377,7 @@ class AbstractReadableSharedMixin(object):
 		is shared.
 		"""
 		return {(x.NTIID
-				 if IUseNTIIDAsExternalUsername.providedBy( x )
+				 if IUseNTIIDAsExternalUsername.providedBy(x)
 				 else x.username)
 				for x in self.sharingTargets}
 
@@ -1386,7 +1387,7 @@ class AbstractReadableSharedMixin(object):
 		is shared.
 		"""
 		return {(x.NTIID
-				 if IUseNTIIDAsExternalUsername.providedBy( x )
+				 if IUseNTIIDAsExternalUsername.providedBy(x)
 				 else x.username)
 				for x in self.flattenedSharingTargets}
 
@@ -1418,18 +1419,18 @@ class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 			# NOTE: This entire process does way too much work for as often as this
 			# is called so we hack this and couple it tightly to when we think
 			# we need to use it. See nti.appserver._adapters
-			#ext_shared_with.append( toExternalObject( entity )['Username'] )
-			if IUseNTIIDAsExternalUsername.providedBy( entity ):
+			# ext_shared_with.append( toExternalObject( entity )['Username'] )
+			if IUseNTIIDAsExternalUsername.providedBy(entity):
 				username = entity.NTIID
-			elif (IUser.providedBy( entity )
-				  or ICommunity.providedBy( entity )
+			elif (IUser.providedBy(entity)
+				  or ICommunity.providedBy(entity)
 				  or IPrincipal.providedBy(entity)):
 				username = entity.username
 			else:
 				# Hmm, what do we have here?
-				username = to_external_object( entity )['Username']
+				username = to_external_object(entity)['Username']
 
-			ext_shared_with.append( username )
+			ext_shared_with.append(username)
 		return set(ext_shared_with) if ext_shared_with else ()
 
 from nti.dataserver.authentication import _dynamic_memberships_that_participate_in_security
@@ -1446,12 +1447,12 @@ class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin)
 
 	"""
 
-	def _may_have_sharing_targets( self ):
-		return IDefaultPublished.providedBy( self )
+	def _may_have_sharing_targets(self):
+		return IDefaultPublished.providedBy(self)
 
 	@property
 	def sharingTargets(self):
-		if IDefaultPublished.providedBy( self ):
+		if IDefaultPublished.providedBy(self):
 			return self.sharingTargetsWhenPublished
 		return self._non_published_sharing_targets
 
@@ -1459,15 +1460,15 @@ class AbstractDefaultPublishableSharedWithMixin(AbstractReadableSharedWithMixin)
 
 	@property
 	def sharingTargetsWhenPublished(self):
-		creator = getattr( self, 'creator', None )
+		creator = getattr(self, 'creator', None)
 		# interestingly, IUser does not extend IPrincipal
-		owner = creator if IUser.providedBy( creator ) else find_interface(self, IUser)
+		owner = creator if IUser.providedBy(creator) else find_interface(self, IUser)
 		# TODO: Using a private function
 		# This returns a generator, the schema says we need a 'UniqueIterable'
-		return _dynamic_memberships_that_participate_in_security( owner, as_principals=False )
+		return _dynamic_memberships_that_participate_in_security(owner, as_principals=False)
 
 def _ii_family():
-	intids = component.queryUtility( zc_intid.IIntIds )
+	intids = component.queryUtility(IIntIds)
 	if intids is not None:
 		return intids.family
 	return BTrees.family64
@@ -1483,49 +1484,49 @@ class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObje
 	# not listening for that. What if the ID gets reused for something else?
 	_sharingTargets = None
 
-	def __init__( self ):
-		super(ShareableMixin,self).__init__()
+	def __init__(self):
+		super(ShareableMixin, self).__init__()
 
 	def _may_have_sharing_targets(self):
 		return bool(self._sharingTargets)
 
-	def clearSharingTargets( self ):
+	def clearSharingTargets(self):
 		if self._sharingTargets is not None:
-			self._sharingTargets.clear() # Preserve existing object
+			self._sharingTargets.clear()  # Preserve existing object
 
 			self.updateLastMod()
 
-	def addSharingTarget( self, target ):
+	def addSharingTarget(self, target):
 		"""
 		Adds a sharing target. We accept either SharingTarget
 		subclasses, or iterables of them.
 
 		"""
-		if isinstance( target, basestring ):
+		if isinstance(target, basestring):
 			raise TypeError('Strings are no longer acceptable', target, self)
 
-		if 	isinstance( target, collections.Iterable ) \
-			and not isinstance( target, basestring ) \
-			and not isinstance( target, DynamicSharingTargetMixin ):
+		if 	isinstance(target, collections.Iterable) \
+			and not isinstance(target, basestring) \
+			and not isinstance(target, DynamicSharingTargetMixin):
 			# TODO: interfaces
 			# expand iterables now
 			for t in target:
-				self.addSharingTarget( t )
+				self.addSharingTarget(t)
 			return
 
 		# Don't allow sharing with ourself, it's weird
 		# Allow self.creator to be  string or an Entity
 		if self.creator == target:
-			logger.debug( "Dissalow sharing object with creator %s", self.creator )
+			logger.debug("Dissalow sharing object with creator %s", self.creator)
 			return
 
 		if self._sharingTargets is None:
 			self._sharingTargets = _ii_family().II.TreeSet()
 
-		self._sharingTargets.add( _getId( target ) )
+		self._sharingTargets.add(_getId(target))
 		self.updateLastMod()
 
-	def updateSharingTargets( self, replacement_targets, notify=False ):
+	def updateSharingTargets(self, replacement_targets, notify=False):
 		"""
 		Cause this object to be shared with only the `replacement_targets` and
 		no one else.
@@ -1539,8 +1540,8 @@ class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObje
 		orig_targets = self.sharingTargets if notify else ()
 
 		replacement_userids = _ii_family().II.TreeSet()
-		def addToSet( target ):
-			if isinstance( target, basestring ):
+		def addToSet(target):
+			if isinstance(target, basestring):
 				raise TypeError('Strings are no longer acceptable', target, self)
 
 			if target == self.creator:
@@ -1548,43 +1549,43 @@ class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObje
 
 			# TODO: interfaces
 			if isinstance(target, DynamicSharingTargetMixin):
-				replacement_userids.add( _getId( target ) )
-			elif isinstance( target, collections.Iterable ):
+				replacement_userids.add(_getId(target))
+			elif isinstance(target, collections.Iterable):
 				for x in target:
-					addToSet( x )
+					addToSet(x)
 			else:
-				replacement_userids.add( _getId( target ) )
+				replacement_userids.add(_getId(target))
 
 		for target in replacement_targets:
 			if target is None:
 				continue
-			addToSet( target )
+			addToSet(target)
 
 		if not replacement_userids:
 			self.clearSharingTargets()
 			if notify and orig_targets:
-				_znotify( ObjectSharingModifiedEvent( self, oldSharingTargets=orig_targets ) )
+				_znotify(ObjectSharingModifiedEvent(self, oldSharingTargets=orig_targets))
 			return
 
 		if self._sharingTargets is None:
 			self._sharingTargets = replacement_userids
 		else:
-			self._sharingTargets.update( replacement_userids )
+			self._sharingTargets.update(replacement_userids)
 
 		# Now remove any excess
 
 		# If for some reason we don't actually have sharing targets
 		# then this may return None
-		excess_targets = _ii_family().II.difference( self._sharingTargets, replacement_userids )
+		excess_targets = _ii_family().II.difference(self._sharingTargets, replacement_userids)
 		for x in (excess_targets or ()):
-			self._sharingTargets.remove( x )
+			self._sharingTargets.remove(x)
 
 		if notify:
 			new_targets = self.sharingTargets
 			if new_targets != orig_targets:
-				_znotify( ObjectSharingModifiedEvent( self, oldSharingTargets=orig_targets ) )
+				_znotify(ObjectSharingModifiedEvent(self, oldSharingTargets=orig_targets))
 
-	def isSharedDirectlyWith( self, wants ):
+	def isSharedDirectlyWith(self, wants):
 		"""
 		Checks if we are directly shared with `wants`, which must be a
 		Principal.
@@ -1594,7 +1595,7 @@ class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObje
 
 		# We can be slightly more efficient than the superclass
 		try:
-			return _getId( wants ) in self._sharingTargets
+			return _getId(wants) in self._sharingTargets
 		except KeyError:
 			pass
 
@@ -1608,13 +1609,13 @@ class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObje
 			return set()
 		# Provide a bit of defense against the intids going away or changing
 		# out from under us
-		return set( (x for x in IntidResolvingIterable( self._sharingTargets,
+		return set((x for x in IntidResolvingIterable(self._sharingTargets,
 														allow_missing=True,
 														parent=self,
-														name='sharingTargets' )
-					if x is not None and hasattr( x, 'username') ) )
+														name='sharingTargets')
+					if x is not None and hasattr(x, 'username')))
 
-	def xxx_isReadableByAnyIdOfUser( self, remote_user, ids, family=None ):
+	def xxx_isReadableByAnyIdOfUser(self, remote_user, ids, family=None):
 		"""
 		Shortcut convenience method to check if this object is shared with
 		any of the intids in ids. These ids come from the
@@ -1624,4 +1625,4 @@ class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObje
 			return False
 
 		family = family or _ii_family()
-		return bool(family.II.intersection( self._sharingTargets, ids ) )
+		return bool(family.II.intersection(self._sharingTargets, ids))
