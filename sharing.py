@@ -587,12 +587,12 @@ class SharingTargetMixin(object):
 		"""
 		# self._muted_oids would raise TypeError, but no need to
 		# run the lazy creator if not needed
-		if root_ntiid_oid is None: raise TypeError('Object has default comparison')  # match BTree message
+		if root_ntiid_oid is None: 
+			raise TypeError('Object has default comparison')  # match BTree message
 		self._muted_oids.add(root_ntiid_oid)
 
 		# Now move over anything that is muted
 		self.__manage_mute()
-
 
 	def unmute_conversation(self, root_ntiid_oid):
 		if '_muted_oids' not in self.__dict__ or root_ntiid_oid is None:
@@ -603,7 +603,6 @@ class SharingTargetMixin(object):
 		if sets.discard_p(self._muted_oids, root_ntiid_oid):
 			# Now unmute anything required
 			self.__manage_mute(mute=False)
-
 
 	def is_muted(self, the_object):
 		if IMutedInStream.providedBy(the_object):
@@ -742,7 +741,9 @@ class SharingTargetMixin(object):
 	@property
 	# @deprecate("Prefer `entities_ignoring_shared_data_from`")
 	def ignoring_shared_data_from(self):
-		""" :returns: Iterable of names of entities we are specifically ignoring shared data from. """
+		""" 
+		:returns: Iterable of names of entities we are specifically ignoring shared data from.
+		"""
 		return _set_of_usernames_from_named_lazy_set_of_wrefs(self, '_entities_not_accepted')
 
 	@property
@@ -767,7 +768,8 @@ class SharingTargetMixin(object):
 		# Naturally we ignore ourself
 		if source is self or self.username == source:
 			return True
-		return source in self.entities_ignoring_shared_data_from or (isinstance(source, six.string_types) and source in self.ignoring_shared_data_from)
+		return 		source in self.entities_ignoring_shared_data_from \
+				or	(isinstance(source, six.string_types) and source in self.ignoring_shared_data_from)
 
 	# TODO: In addition to the actual explicitly shared objects that I've
 	# accepted because I'm not ignoring, we need the "incoming" group
@@ -803,8 +805,7 @@ class SharingTargetMixin(object):
 
 	def _addToStream(self, change):
 		"""
-		:return: A boolean indicating whether the change was accepted
-		or muted.
+		:return: A boolean indicating whether the change was accepted or muted.
 		"""
 		__traceback_info__ = self
 		if self.is_muted(change.object):
@@ -1166,7 +1167,6 @@ class SharingSourceMixin(SharingTargetMixin):
 		context_cache._build_entities_followed_for_read(self)
 		communities_followed = context_cache.communities_followed
 
-
 		for following in communities_followed:
 				# TODO: Better interface
 			result += following._get_stream_cache_containers(containerId)
@@ -1299,6 +1299,7 @@ class DynamicSharingTargetMixin(SharingTargetMixin):
 	defaultGravatarType = 'retro'
 
 	MAX_STREAM_SIZE = 100000
+
 	# Turns out we need to maintain both the stream and the objects.
 	def __init__(self, *args, **kwargs):
 		super(DynamicSharingTargetMixin, self).__init__(*args, **kwargs)
@@ -1346,7 +1347,6 @@ class AbstractReadableSharedMixin(object):
 		for target in self.sharingTargets:
 			if wants in IEntityContainer(target, ()):
 				return True
-
 
 	def isSharedWith(self, wants):
 		"""
@@ -1397,6 +1397,7 @@ class AbstractReadableSharedMixin(object):
 	sharingTargetNames = property(getSharingTargetNames)
 
 from nti.externalization.externalization import to_external_object
+
 class AbstractReadableSharedWithMixin(AbstractReadableSharedMixin):
 	"""
 	Extends :class:`AbstractReadableSharedMixin` to provide the :meth:`sharedWith` property.
