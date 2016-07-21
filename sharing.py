@@ -48,9 +48,6 @@ from nti.common import sets
 
 from nti.dataserver.activitystream_change import Change
 
-from nti.dataserver.datastructures import LastModifiedCopyingUserList
-from nti.dataserver.datastructures import check_contained_object_for_storage
-
 from nti.dataserver.interfaces import IUser
 from nti.dataserver.interfaces import ICommunity
 from nti.dataserver.interfaces import IFriendsList
@@ -68,6 +65,9 @@ from nti.dataserver.interfaces import StopDynamicMembershipEvent
 from nti.dataserver.interfaces import StartDynamicMembershipEvent
 from nti.dataserver.interfaces import IUseNTIIDAsExternalUsername
 from nti.dataserver.interfaces import ISharingTargetEntityIterable
+
+from nti.datastructures.datastructures import LastModifiedCopyingUserList
+from nti.datastructures.datastructures import check_contained_object_for_storage
 
 from nti.dublincore.datastructures import CreatedModDateTrackingObject
 
