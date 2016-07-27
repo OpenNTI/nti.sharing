@@ -101,7 +101,7 @@ class _SharedContainedObjectStorage(IntidContainedStorage):
 	def _check_contained_object_for_storage(self, contained):
 		check_contained_object_for_storage(contained)
 
-from nti.common.time import time_to_64bit_int as _time_to_64bit_int
+from nti.zodb.containers import time_to_64bit_int as _time_to_64bit_int
 
 class _SharedStreamCache(persistent.Persistent, Contained):
 	"""
