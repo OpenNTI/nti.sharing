@@ -46,6 +46,9 @@ from ZODB.POSException import POSKeyError
 
 from nti.common import sets
 
+from nti.containers.containers import IntidContainedStorage
+from nti.containers.containers import IntidResolvingIterable
+
 from nti.dataserver.activitystream_change import Change
 
 from nti.dataserver.interfaces import IUser
@@ -72,9 +75,6 @@ from nti.datastructures.datastructures import check_contained_object_for_storage
 from nti.dublincore.datastructures import CreatedModDateTrackingObject
 
 from nti.externalization.oids import to_external_ntiid_oid
-
-from nti.intid.containers import IntidContainedStorage
-from nti.intid.containers import IntidResolvingIterable
 
 from nti.wref.interfaces import IWeakRef
 
