@@ -587,7 +587,7 @@ class SharingTargetMixin(object):
 		"""
 		# self._muted_oids would raise TypeError, but no need to
 		# run the lazy creator if not needed
-		if root_ntiid_oid is None: 
+		if root_ntiid_oid is None:
 			raise TypeError('Object has default comparison')  # match BTree message
 		self._muted_oids.add(root_ntiid_oid)
 
@@ -741,7 +741,7 @@ class SharingTargetMixin(object):
 	@property
 	# @deprecate("Prefer `entities_ignoring_shared_data_from`")
 	def ignoring_shared_data_from(self):
-		""" 
+		"""
 		:returns: Iterable of names of entities we are specifically ignoring shared data from.
 		"""
 		return _set_of_usernames_from_named_lazy_set_of_wrefs(self, '_entities_not_accepted')

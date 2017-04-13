@@ -120,17 +120,20 @@ class TestStreamSharedCache(unittest.TestCase):
 		sharingtarget.MAX_STREAM_SIZE = 500 # cache way more than we need
 		sharingtarget.username = 'foo@bar'
 
-		earliest_id = time.time() + 1
+		earliest_id = new_intid = 0
+
 		all_changes = [] # from oldest to newest
 		for _ in range(200): # So 400 total objects
 			for cid in 'c1', 'c2':
 				change = Change()
-				change.id = change.lastModified = time.time()
+				change.id = new_intid
+				new_intid += 1
+				change.lastModified = time.time()
 				change.containerId = cid
 				change.creator = 'me'
 				all_changes.append( change )
 				sharingtarget._addToStream( change )
-		latest_id = time.time() - 1
+		latest_id = change.id
 
 		# First, make sure we can get them all
 		# from containers individually, sorted descending
@@ -164,6 +167,7 @@ class TestStreamSharedCache(unittest.TestCase):
 
 		# Now we can take that and get the most recent 10 changes before them
 		before = result[-1].lastModified
+		before_id = result[-1].id
 		context_cache = _SharingContextCache()
 		context_cache.make_accumulator()
 		sharingtarget.getContainedStream( 'c1', maxCount=10, before=before, context_cache=context_cache )
@@ -172,6 +176,6 @@ class TestStreamSharedCache(unittest.TestCase):
 
 		assert_that( result, has_length( 10 ) )
 		# Newest in this set is exactly one before we started
-		assert_that( result[0], has_property( 'id', before - 1 ) )
+		assert_that( result[0], has_property( 'id', before_id - 1 ) )
 		expected = list( reversed( all_changes[290:300] ) )
 		assert_that( result, is_( expected ) )
