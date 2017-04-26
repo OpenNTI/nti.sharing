@@ -57,7 +57,6 @@ from nti.dataserver.interfaces import IFriendsList
 from nti.dataserver.interfaces import IMutedInStream
 from nti.dataserver.interfaces import IWritableShared
 from nti.dataserver.interfaces import IEntityContainer
-from nti.dataserver.interfaces import IDefaultPublished
 from nti.dataserver.interfaces import StopFollowingEvent
 from nti.dataserver.interfaces import FollowerAddedEvent
 from nti.dataserver.interfaces import EntityFollowingEvent
@@ -75,6 +74,8 @@ from nti.datastructures.datastructures import check_contained_object_for_storage
 from nti.dublincore.datastructures import CreatedModDateTrackingObject
 
 from nti.externalization.oids import to_external_ntiid_oid
+
+from nti.publishing.interfaces import IDefaultPublished
 
 from nti.wref.interfaces import IWeakRef
 
