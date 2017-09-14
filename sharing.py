@@ -73,7 +73,7 @@ from nti.datastructures.datastructures import check_contained_object_for_storage
 
 from nti.dublincore.datastructures import CreatedModDateTrackingObject
 
-from nti.externalization.oids import to_external_ntiid_oid
+from nti.ntiids.oids import to_external_ntiid_oid
 
 from nti.publishing.interfaces import IDefaultPublished
 
