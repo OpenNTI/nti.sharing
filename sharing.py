@@ -312,30 +312,28 @@ class _StreamValuesProxy(object):
 			if change is not None:
 				yield change
 
-def _set_of_usernames_from_named_lazy_set_of_wrefs(self, name):
-	container = ()
-	self._p_activate()  # Ensure we have a dict
-	if name in self.__dict__:
-		container = getattr(self, name)
+
+def _set_of_usernames_from_named_lazy_set_of_wrefs(obj, name):
 	result = set()
-	for wref in container:
-		val = wref()
-		if val is not None:
-			if IUseNTIIDAsExternalUsername.providedBy(val):
-				result.add(val.NTIID)
-			else:
-				result.add(val.username)
+	container = _iterable_of_entities_from_named_lazy_set_of_wrefs(obj, name)
+	for entity in container:
+		if IUseNTIIDAsExternalUsername.providedBy(entity):
+			result.add(entity.NTIID)
+		else:
+			result.add(entity.username)
 	return result
 
-def _iterable_of_entities_from_named_lazy_set_of_wrefs(self, name):
+
+def _iterable_of_entities_from_named_lazy_set_of_wrefs(obj, name):
 	container = ()
-	self._p_activate()  # Ensure we have a dict
-	if name in self.__dict__:
-		container = getattr(self, name)
+	obj._p_activate()  # Ensure we have a dict
+	if name in obj.__dict__:
+		container = getattr(obj, name)
 	for wref in container:
-		val = wref()
+		val = wref(allow_cached=False)
 		if val is not None:
 			yield val
+
 
 def _remove_entity_from_named_lazy_set_of_wrefs(self, name, entity):
 	self._p_activate()  # Ensure we have a dict
