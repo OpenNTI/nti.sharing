@@ -59,6 +59,7 @@ setup(
         'nti.coremetadata',
         'nti.datastructures',
         'nti.dublincore',
+        'nti.externalization',
         'nti.ntiids',
         'nti.publishing',
         'nti.wref',

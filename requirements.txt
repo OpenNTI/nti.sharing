@@ -1,5 +1,6 @@
 -e git+https://github.com/NextThought/nti.common.git@master#egg=nti.common
 -e git+https://github.com/NextThought/nti.ntiids.git@master#egg=nti.ntiids
+-e git+https://github.com/NextThought/nti.traversal.git@master#egg=nti.traversal
 -e git+https://github.com/NextThought/nti.containers.git@master#egg=nti.containers
 -e git+https://github.com/NextThought/nti.dublincore.git@master#egg=nti.dublincore
 -e git+https://github.com/NextThought/nti.publishing.git@master#egg=nti.publishing
