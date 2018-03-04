@@ -47,7 +47,7 @@ from ZODB.POSException import POSKeyError
 from nti.common import sets
 
 from nti.containers.datastructures import IntidContainedStorage
-from nti.containers.datastructures import IntidResolvingIterable
+from `nti.containers.datastructures import IntidResolvingIterable
 
 from nti.dataserver.activitystream_change import Change
 
