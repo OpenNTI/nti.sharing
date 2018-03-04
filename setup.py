@@ -61,6 +61,8 @@ setup(
         'nti.dublincore',
         'nti.ntiids',
         'nti.publishing',
+        'nti.wref',
+        'nti.zodb',
         'persistent',
         'six',
         'ZODB',
