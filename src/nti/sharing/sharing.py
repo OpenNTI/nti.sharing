@@ -692,7 +692,8 @@ class SharingTargetMixin(object):
         if not source:
             return False
         _remove_entity_from_named_lazy_set_of_wrefs(
-            self, '_entities_accepted', source)
+            self, '_entities_accepted', source
+        )
         return True
 
     @property
@@ -797,7 +798,7 @@ class SharingTargetMixin(object):
         """
         # The string path is deprecated
         return source in self.entities_accepting_shared_data_from \
-               or (isinstance(source, six.string_types) and source in self.accepting_shared_data_from)
+            or (isinstance(source, six.string_types) and source in self.accepting_shared_data_from)
 
     def is_ignoring_shared_data_from(self, source):
         """
@@ -913,7 +914,8 @@ class SharingTargetMixin(object):
             result = None
 
         stream_containers = self._get_stream_cache_containers(
-            containerId, context_cache=context_cache)
+            containerId, context_cache=context_cache
+        )
 
         for stream_container in stream_containers:
             if () == stream_container:
@@ -943,11 +945,11 @@ class SharingTargetMixin(object):
                 # heap, no need to look any further
                 try:
                     change_lastModified = change.lastModified
-                    if ((minAge is not None and change_lastModified < minAge)
-                            or (before != -1 and change_lastModified >= before)):
+                    if (   (minAge is not None and change_lastModified < minAge)
+                        or (before != -1 and change_lastModified >= before)):
                         continue
-                except KeyError:  # POSKeyError
-                    logger.warn("POSKeyError in stream %s", containerId)
+                except KeyError:  # pragma: no cover
+                    logger.warning("POSKeyError in stream %s", containerId)
                     continue
 
                 if len(accumulator) == maxCount and change_lastModified <= accumulator[0][0]:
@@ -958,10 +960,10 @@ class SharingTargetMixin(object):
                     continue
 
                 change_creator = change.creator
-                if (not change.creator
-                        or self.is_ignoring_shared_data_from(change_creator)
-                        or IDeletedObjectPlaceholder.providedBy(data)
-                        or self.is_muted(data)):
+                if (   not change.creator
+                    or self.is_ignoring_shared_data_from(change_creator)
+                    or IDeletedObjectPlaceholder.providedBy(data)
+                    or self.is_muted(data)):
                     continue
 
                 if _container_predicate is not None and not _container_predicate(change):
@@ -1695,7 +1697,7 @@ class ShareableMixin(AbstractReadableSharedWithMixin, CreatedModDateTrackingObje
         # We can be slightly more efficient than the superclass
         try:
             return _getId(wants) in self._sharingTargets
-        except KeyError:
+        except KeyError:  # pragma: no cover
             pass
 
     @property
